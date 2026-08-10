@@ -45,3 +45,13 @@ matlab -batch "cd('...\hitran-viewer\matlab'); test_workflow"
 
 注意：本机代理环境下需存在用户环境变量 `NO_PROXY=127.0.0.1,localhost`（安装时已写入），
 否则 MATLAB 访问本地后端会报 CURLE 52。
+
+若仍报 CURLE 52，检查 MATLAB 自身代理设置（新 HTTP 栈不支持 SOCKS 代理）：
+
+```matlab
+s = settings; w = s.matlab.web;
+w.UseProxy.PersonalValue = false;   % 关闭 MATLAB 内置代理
+```
+
+或在 Preferences > Web > Proxy 中选择 "No proxy"。该设置持久化，对所有新会话生效；
+hapi_client 已内置自动回退（新 HTTP 栈失败时降级 Java 栈 urlread）作为额外保障。

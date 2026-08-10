@@ -75,25 +75,45 @@ classdef hapi_client < handle
 
     methods (Access = private)
         function r = get(obj, path)
-            opts = weboptions('Timeout', obj.Timeout);
-            try
-                r = webread([obj.BaseURL path], opts);
-            catch e
-                error('hapi_client:http', 'GET %s 失败：%s', path, errMsg(e));
-            end
+            r = obj.request([obj.BaseURL path], []);
             checkStatus(r);
         end
 
         function r = post(obj, path, body)
-            opts = weboptions('MediaType', 'application/json', ...
-                              'RequestMethod', 'post', ...
-                              'Timeout', obj.Timeout);
-            try
-                r = webwrite([obj.BaseURL path], jsonencode(body), opts);
-            catch e
-                error('hapi_client:http', 'POST %s 失败：%s', path, errMsg(e));
-            end
+            r = obj.request([obj.BaseURL path], jsonencode(body));
             checkStatus(r);
+        end
+
+        function r = request(obj, url, jsonBody)
+            % 优先使用新 HTTP 栈；若被本机代理拦截（CURLE 52 等），
+            % 自动降级到 Java 栈并动态配置回环地址直连，
+            % 规避启动早于 NO_PROXY 环境变量的 MATLAB 会话问题。
+            try
+                if isempty(jsonBody)
+                    r = webread(url, weboptions('Timeout', obj.Timeout));
+                else
+                    r = webwrite(url, jsonBody, weboptions( ...
+                        'MediaType', 'application/json', ...
+                        'RequestMethod', 'post', ...
+                        'Timeout', obj.Timeout));
+                end
+                return;
+            catch e
+                if ~contains(e.message, {'CURLE', 'proxy', '代理'}, ...
+                        'IgnoreCase', true)
+                    rethrow(e);
+                end
+            end
+            % Java 栈回退（urlread）：不受新 HTTP 栈启动时代理快照影响，
+            % 同时声明回环地址不走代理
+            java.lang.System.setProperty('http.nonProxyHosts', ...
+                'localhost|127.*|[::1]');
+            if isempty(jsonBody)
+                txt = urlread(url);
+            else
+                txt = urlread(url, 'post', jsonBody);
+            end
+            r = jsondecode(txt);
         end
     end
 end
