@@ -1,0 +1,11 @@
+name: hitran-viewer
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - pip
+  - pip:
+      - flask
+      - flask-cors
+      - hitran-api
