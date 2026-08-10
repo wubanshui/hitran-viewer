@@ -1,198 +1,262 @@
 function app = hitran_gui()
-% HITRAN_GUI  hitran-viewer MATLAB 主界面
+% HITRAN_GUI  hitran-viewer MATLAB 主界面（SpectraPlot 风格）
+%   参照 spectraplot.com Absorption 工具的交互范式：
+%   - 深藏青导航条 + 左侧参数卡片 + 右侧绘图区（白色卡片风格）
+%   - ν/λ 双向联动输入（λ(um)=1e4/ν(cm-1)）
+%   - Y 轴单位切换 Absorbance/Transmission（前端换算 T=exp(-A)）
+%   - SHOW SUM 叠加曲线、曲线图例表格（显隐/删除）
+%   - 双 X 轴：下波数 cm-1，上波长 um（反向）
+%   保留本工程特色：谱线棒状图、悬停谱线信息、本地表管理、
+%   PNG/CSV/工作区导出、后端连接设置。
+%
 %   依赖：后端服务已启动（默认 http://127.0.0.1:5000）
-%   运行：在 MATLAB 中执行 hitran_gui
-%
-%   布局：顶栏为功能区（状态显示 + 连接设置入口），左侧依次为
-%   数据、环境与计算参数、操作、导出区块；连接/API key 等低频
-%   设置收进"连接设置"弹窗，按需打开。
-%
-%   功能：fetch HITRAN 数据、吸收系数/透过率/吸收谱计算与绘图、
-%   多曲线叠加、谱线棒状图、鼠标悬停显示谱线信息、PNG/CSV 导出。
 
-    fig = uifigure('Name', 'hitran-viewer — 气体吸收线可视化', ...
-        'Position', [80 60 1280 780], 'Resize', 'on', ...
-        'AutoResizeChildren', 'off');   % 组件像素位置恒定，避免缩放导致布局错位
+    NAVY = [0.090 0.110 0.408];      % SpectraPlot 主题色 #171C68
+    CARD = [1 1 1];                  % 卡片白
+    BG   = [0.91 0.92 0.94];         % 页面浅灰底
+
+    fig = uifigure('Name', 'hitran-viewer · Absorption', ...
+        'Position', [60 40 1280 800], 'Resize', 'on', ...
+        'AutoResizeChildren', 'off', 'Color', BG);
 
     % ---------------- 应用状态 ----------------
     app = struct();
-    app.fig        = fig;
-    app.client     = hapi_client('http://127.0.0.1:5000');
-    app.molecules  = [];
-    app.tableMeta  = containers.Map();   % 表名 -> struct(M, I)
-    app.curves     = {};                 % 已绘制曲线 cell of struct
-    fig.UserData   = app;
+    app.fig         = fig;
+    app.client      = hapi_client('http://127.0.0.1:5000');
+    app.molecules   = [];
+    app.tableMeta   = containers.Map();   % 表名 -> struct(M, I)
+    app.curves      = {};                 % 曲线 cell of struct（y 恒按 Absorbance 存储）
+    app.palette     = [NAVY; 0.42 0.05 0.14; 0.13 0.57 0.64; ...
+                       0.85 0.33 0.10; 0.29 0.49 0.20; 0.47 0.32 0.66; ...
+                       0.80 0.60 0.10; 0.10 0.42 0.70; 0.70 0.15 0.45; ...
+                       0.45 0.45 0.45; 0.00 0.53 0.53; 0.55 0.65 0.15];
+    app.selRow      = [];                 % 图例表格当前选中行
+    app.rangeGuard  = false;              % ν/λ 联动防递归
+    fig.UserData    = app;
 
-    % ---------------- 顶栏功能区 ----------------
-    bar = uipanel(fig, 'Position', [10 735 1260 38], 'BorderType', 'line', ...
-        'BackgroundColor', [0.95 0.96 0.98]);
-    uilabel(bar, 'Text', 'hitran-viewer', 'Position', [10 8 105 22], ...
-        'FontWeight', 'bold', 'FontSize', 12);
-    app.lblStatus = uilabel(bar, 'Text', '未连接', ...
-        'Position', [120 8 1000 22], 'FontColor', [0.6 0.6 0.6]);
-    app.btnConnSettings = uibutton(bar, 'Text', '设置', ...
-        'Position', [1145 6 105 26], 'ButtonPushedFcn', @onConnSettings);
+    % ---------------- 顶部导航条（深藏青） ----------------
+    nav = uipanel(fig, 'Position', [0 760 1280 40], 'BorderType', 'none', ...
+        'BackgroundColor', NAVY);
+    uilabel(nav, 'Text', 'hitran-viewer', 'Position', [14 9 110 22], ...
+        'FontColor', [1 1 1], 'FontWeight', 'bold', 'FontSize', 13);
+    uilabel(nav, 'Text', 'Absorption', 'Position', [130 9 90 22], ...
+        'FontColor', [0.78 0.82 0.95], 'FontSize', 11);
+    app.lblStatus = uilabel(nav, 'Text', '未连接', ...
+        'Position', [230 9 860 22], 'FontColor', [0.78 0.82 0.95]);
+    app.btnConnSettings = uibutton(nav, 'Text', '设置', ...
+        'Position', [1165 7 100 26], 'ButtonPushedFcn', @onConnSettings, ...
+        'BackgroundColor', [0.16 0.18 0.52], 'FontColor', [1 1 1]);
 
-    % ---------------- 左侧面板 ----------------
-    pnl = uipanel(fig, 'Position', [10 10 380 720], 'BorderType', 'none');
-
-    % --- 数据区 ---
-    grpData = uipanel(pnl, 'Title', '数据', 'Position', [0 485 380 235], ...
+    % ---------------- 左侧参数卡片 ----------------
+    card = uipanel(fig, 'Position', [10 10 310 740], 'BorderType', 'line', ...
+        'BorderWidth', 1, 'BackgroundColor', CARD, ...
+        'ForegroundColor', [0.82 0.84 0.87], 'Title', '模拟参数', ...
         'FontSize', 12, 'FontWeight', 'bold');
-    uilabel(grpData, 'Text', '气体', 'Position', [10 178 34 22]);
-    app.ddMol = uidropdown(grpData, 'Position', [50 178 150 22], ...
+
+    rowH = 30;  y = 560;  labW = 88;  fldX = 102;  fldW = 196;
+    % 分子
+    uilabel(card, 'Text', 'Species', 'Position', [12 y labW 22]);
+    app.ddMol = uidropdown(card, 'Position', [fldX y fldW 22], ...
         'Items', {'加载中...'}, 'ItemsData', {0}, ...
-        'Tooltip', '目标气体（HITRAN 分子编号 + 化学式 + 中文名）', ...
+        'Tooltip', '目标气体（HITRAN 分子编号 + 化学式 + 名称）', ...
         'ValueChangedFcn', @onMolChanged);
-    uilabel(grpData, 'Text', '同位素', 'Position', [208 178 46 22]);
-    app.ddIso = uidropdown(grpData, 'Position', [258 178 112 22], ...
+    y = y - rowH;
+    % 同位素
+    uilabel(card, 'Text', '同位素', 'Position', [12 y labW 22]);
+    app.ddIso = uidropdown(card, 'Position', [fldX y fldW 22], ...
         'Items', {'1'}, 'ItemsData', {1}, ...
-        'Tooltip', '同位素编号（1=最丰富同位素，如 CH4 主同位素）');
-
-    uilabel(grpData, 'Text', '波数下限 cm-1', 'Position', [10 148 80 22]);
-    app.edNuMin = uieditfield(grpData, 'numeric', 'Value', 6040, ...
-        'Position', [95 148 65 22], ...
-        'Tooltip', ['光谱范围下限波数 ν（cm⁻¹），正数；' ...
-            '换算关系 λ(nm)=1e7/ν；示例：6040'], ...
-        'ValueChangedFcn', @onRangeChanged);
-    uilabel(grpData, 'Text', '上限', 'Position', [168 148 28 22]);
-    app.edNuMax = uieditfield(grpData, 'numeric', 'Value', 6060, ...
-        'Position', [200 148 65 22], ...
-        'Tooltip', ['光谱范围上限波数 ν（cm⁻¹），需大于下限；' ...
-            '示例：6060（对应 ~1653 nm）'], ...
-        'ValueChangedFcn', @onRangeChanged);
-    app.lblWl = uilabel(grpData, 'Text', '', 'Position', [272 148 98 22], ...
-        'FontSize', 10, 'FontColor', [0.3 0.5 0.7]);
-
-    uilabel(grpData, 'Text', '表名', 'Position', [10 118 34 22]);
-    app.edTable = uieditfield(grpData, 'text', 'Value', 'CH4_1653', ...
-        'Position', [50 118 140 22], ...
-        'Tooltip', ['本地数据表名：字母/数字/下划线，不带扩展名；' ...
-            '命名建议：气体_波段，如 CH4_1653']);
-    app.btnFetch = uibutton(grpData, 'Text', 'Fetch 下载', ...
-        'Position', [200 118 95 22], 'ButtonPushedFcn', @onFetch);
-    app.btnImport = uibutton(grpData, 'Text', '导入 .par', ...
-        'Position', [303 118 67 22], 'ButtonPushedFcn', @onImport);
-
-    uilabel(grpData, 'Text', '本地表', 'Position', [10 88 46 22]);
-    app.ddTables = uidropdown(grpData, 'Position', [60 88 240 22], ...
-        'Items', {'(刷新)'}, 'ItemsData', {''});
-    app.btnRefresh = uibutton(grpData, 'Text', '刷新', ...
-        'Position', [308 88 62 22], 'ButtonPushedFcn', @onRefreshTables);
-
-    app.lblTableInfo = uilabel(grpData, 'Text', '', ...
-        'Position', [10 58 360 22], 'FontSize', 10, ...
-        'FontColor', [0.3 0.5 0.7]);
-
-    % --- 参数区 ---
-    grpParam = uipanel(pnl, 'Title', '环境与计算参数', 'Position', [0 280 380 200], ...
-        'FontSize', 12, 'FontWeight', 'bold');
-    uilabel(grpParam, 'Text', '温度 K', 'Position', [10 142 45 22]);
-    app.edT = uieditfield(grpParam, 'numeric', 'Value', 296, ...
-        'Position', [60 142 60 22], ...
-        'Tooltip', ['气体温度 T（K，开尔文），影响线强与多普勒展宽；' ...
-            '室温≈296；格式：正数，示例 296']);
-    uilabel(grpParam, 'Text', '压力 atm', 'Position', [135 142 55 22]);
-    app.edP = uieditfield(grpParam, 'numeric', 'Value', 1, ...
-        'Position', [195 142 60 22], ...
-        'Tooltip', ['总压 p（atm，标准大气压），决定碰撞（洛伦兹）展宽；' ...
+        'Tooltip', '同位素编号（1=最丰富同位素）');
+    y = y - rowH;
+    % 温度
+    uilabel(card, 'Text', 'T (K)', 'Position', [12 y labW 22]);
+    app.edT = uieditfield(card, 'numeric', 'Value', 296, ...
+        'Position', [fldX y fldW 22], ...
+        'Tooltip', ['气体温度 T（K），影响线强与多普勒展宽；' ...
+            '室温≈296；格式：正数']);
+    y = y - rowH;
+    % 压力
+    uilabel(card, 'Text', 'P (atm)', 'Position', [12 y labW 22]);
+    app.edP = uieditfield(card, 'numeric', 'Value', 1, ...
+        'Position', [fldX y fldW 22], ...
+        'Tooltip', ['总压 P（atm），决定碰撞（洛伦兹）展宽；' ...
             '1 atm=101325 Pa；格式：正数']);
-    uilabel(grpParam, 'Text', '光程 cm', 'Position', [270 142 45 22]);
-    app.edL = uieditfield(grpParam, 'numeric', 'Value', 10, ...
-        'Position', [315 142 55 22], ...
-        'Tooltip', ['吸收光程 L（cm），仅透过率/吸收谱生效（T=exp(-k·L)）；' ...
-            '光声/直接吸收池长度；格式：正数']);
-
-    uilabel(grpParam, 'Text', '浓度(摩尔分数)', 'Position', [10 112 90 22]);
-    app.edConc = uieditfield(grpParam, 'numeric', 'Value', 0.01, ...
-        'Position', [105 112 75 22], ...
-        'Tooltip', ['目标气体摩尔分数 x（0~1 无量纲），' ...
-            '1%=0.01，1 ppm=1e-6；格式：0~1 小数']);
-    uilabel(grpParam, 'Text', '线型', 'Position', [195 112 30 22]);
-    app.ddShape = uidropdown(grpParam, 'Position', [230 112 140 22], ...
+    y = y - rowH;
+    % 摩尔分数
+    app.lblConc = uilabel(card, 'Text', 'χ (摩尔分数)', 'Position', [12 y labW 22]);
+    app.edConc = uieditfield(card, 'numeric', 'Value', 0.01, ...
+        'Position', [fldX y fldW 22], ...
+        'Tooltip', ['目标气体摩尔分数 χ（0~1 无量纲）；' ...
+            '1%=0.01，1 ppm=1e-6']);
+    y = y - rowH;
+    % 光程
+    uilabel(card, 'Text', 'L (cm)', 'Position', [12 y labW 22]);
+    app.edL = uieditfield(card, 'numeric', 'Value', 10, ...
+        'Position', [fldX y fldW 22], ...
+        'Tooltip', ['吸收光程 L（cm），A=k·χ·P·L；' ...
+            '格式：正数']);
+    y = y - rowH - 8;
+    % 波数范围
+    uilabel(card, 'Text', 'νstart (cm⁻¹)', 'Position', [12 y labW 22]);
+    app.edNuMin = uieditfield(card, 'numeric', 'Value', 6040, ...
+        'Position', [fldX y fldW 22], ...
+        'Tooltip', '光谱范围下限波数 ν（cm⁻¹）；λ(μm)=1e4/ν', ...
+        'ValueChangedFcn', @onNuChanged);
+    y = y - rowH;
+    uilabel(card, 'Text', 'νend (cm⁻¹)', 'Position', [12 y labW 22]);
+    app.edNuMax = uieditfield(card, 'numeric', 'Value', 6060, ...
+        'Position', [fldX y fldW 22], ...
+        'Tooltip', '光谱范围上限波数 ν（cm⁻¹），需大于 νstart', ...
+        'ValueChangedFcn', @onNuChanged);
+    y = y - rowH;
+    uilabel(card, 'Text', 'νstep (cm⁻¹)', 'Position', [12 y labW 22]);
+    app.edStep = uieditfield(card, 'numeric', 'Value', 0.002, ...
+        'Position', [fldX y fldW 22], ...
+        'Tooltip', ['波数网格步长 Δν（cm⁻¹），越小越精细但越慢；' ...
+            '建议≤线宽一半']);
+    y = y - rowH;
+    % 波长范围（与波数联动，只读显示）
+    uilabel(card, 'Text', 'λstart (μm)', 'Position', [12 y labW 22], ...
+        'FontColor', [0.35 0.40 0.55]);
+    app.edWlMin = uieditfield(card, 'numeric', 'Position', [fldX y fldW 22], ...
+        'Enable', 'off', 'Tooltip', '与 νend 联动：λ=1e4/ν');
+    y = y - rowH;
+    uilabel(card, 'Text', 'λend (μm)', 'Position', [12 y labW 22], ...
+        'FontColor', [0.35 0.40 0.55]);
+    app.edWlMax = uieditfield(card, 'numeric', 'Position', [fldX y fldW 22], ...
+        'Enable', 'off', 'Tooltip', '与 νstart 联动：λ=1e4/ν');
+    y = y - rowH - 10;
+    % 主按钮
+    app.btnAdd = uibutton(card, 'Text', 'ADD TO PLOT', ...
+        'Position', [12 y fldW + labW 30], 'ButtonPushedFcn', @onAddToPlot, ...
+        'BackgroundColor', NAVY, 'FontColor', [1 1 1], ...
+        'FontSize', 12, 'FontWeight', 'bold', ...
+        'Tooltip', '计算并添加到绘图（自动下载所需谱线数据）');
+    y = y - rowH - 6;
+    % 高级选项
+    uilabel(card, 'Text', '线型', 'Position', [12 y labW 22]);
+    app.ddShape = uidropdown(card, 'Position', [fldX y fldW 22], ...
         'Items', {'Voigt', 'Lorentz', 'Gaussian(Doppler)', 'HT'}, ...
         'ItemsData', {'voigt', 'lorentz', 'gaussian', 'ht'}, ...
         'Tooltip', ['线型函数：Voigt=常用（碰撞+多普勒卷积）；' ...
             'HT=高速线型（含 Dicke 变窄等效应）'], ...
         'Value', 'voigt');
-
-    uilabel(grpParam, 'Text', '网格步长 cm-1', 'Position', [10 82 85 22]);
-    app.edStep = uieditfield(grpParam, 'numeric', 'Value', 0.002, ...
-        'Position', [100 82 65 22], ...
-        'Tooltip', ['波数网格步长 Δν（cm⁻¹），越小越精细但越慢；' ...
-            '建议≤线宽一半；格式：正小数，示例 0.002']);
-    uilabel(grpParam, 'Text', '仪器函数', 'Position', [180 82 60 22]);
-    app.ddInstr = uidropdown(grpParam, 'Position', [245 82 125 22], ...
+    y = y - rowH;
+    uilabel(card, 'Text', '光谱类型', 'Position', [12 y labW 22]);
+    app.ddSpec = uidropdown(card, 'Position', [fldX y fldW 22], ...
+        'Items', {'吸收谱 Absorbance', '吸收系数 Absorption coef'}, ...
+        'ItemsData', {'absorption', 'abscoeff'}, ...
+        'Tooltip', ['吸收谱 A=1-exp(-kL)，可与透过率互换显示；' ...
+            '吸收系数 k(ν)（cm⁻¹）不参与单位换算'], ...
+        'Value', 'absorption');
+    y = y - rowH;
+    uilabel(card, 'Text', '仪器函数', 'Position', [12 y labW 22]);
+    app.ddInstr = uidropdown(card, 'Position', [fldX y fldW 22], ...
         'Items', {'none', 'sinc', 'gaussian', 'rectangular', 'triangular'}, ...
-        'Tooltip', ['仪器函数卷积：none=不卷积（激光线宽远小于吸收线时）；' ...
+        'Tooltip', ['仪器函数卷积：none=不卷积；' ...
             'sinc=FT 光谱仪，gaussian=常见激光/光栅仪器'], ...
         'Value', 'none', 'ValueChangedFcn', @onInstrChanged);
-    app.lblRes = uilabel(grpParam, 'Text', '分辨率 cm-1', ...
-        'Position', [180 52 60 22], 'Enable', 'off');
-    app.edRes = uieditfield(grpParam, 'numeric', 'Value', 0.1, ...
-        'Position', [245 52 65 22], 'Enable', 'off', ...
-        'Tooltip', ['仪器分辨率（cm⁻¹），仅仪器函数≠none 时生效；' ...
-            '格式：正数，示例 0.1']);
+    y = y - rowH;
+    app.lblRes = uilabel(card, 'Text', '分辨率 (cm⁻¹)', ...
+        'Position', [12 y labW 22], 'Enable', 'off');
+    app.edRes = uieditfield(card, 'numeric', 'Value', 0.1, ...
+        'Position', [fldX y fldW 22], 'Enable', 'off', ...
+        'Tooltip', '仪器分辨率（cm⁻¹），仅仪器函数≠none 时生效');
 
-    uilabel(grpParam, 'Text', '光谱类型', 'Position', [10 22 60 22]);
-    app.ddSpec = uidropdown(grpParam, 'Position', [75 22 130 22], ...
-        'Items', {'吸收系数', '透过率', '吸收谱'}, ...
-        'ItemsData', {'abscoeff', 'transmittance', 'absorption'}, ...
-        'Tooltip', ['吸收系数 k(ν)（cm⁻¹）；透过率 T=exp(-kL)；' ...
-            '吸收谱 A=1-T'], ...
-        'Value', 'abscoeff');
-    uilabel(grpParam, 'Text', '横轴', 'Position', [215 22 30 22]);
-    app.ddXUnit = uidropdown(grpParam, 'Position', [250 22 120 22], ...
-        'Items', {'cm-1', 'nm'}, 'Value', 'cm-1', ...
-        'Tooltip', '横轴单位：波数 cm⁻¹ 或波长 nm（自动换算并反向坐标轴）');
-
-    % --- 操作区 ---
-    grpAct = uipanel(pnl, 'Title', '操作', 'Position', [0 185 380 90], ...
+    % ---------------- 数据面板（本地表管理） ----------------
+    pnlData = uipanel(fig, 'Position', [10 10 310 150], 'BorderType', 'line', ...
+        'BorderWidth', 1, 'BackgroundColor', CARD, ...
+        'ForegroundColor', [0.82 0.84 0.87], 'Title', '数据', ...
         'FontSize', 12, 'FontWeight', 'bold');
-    app.btnCalc = uibutton(grpAct, 'Text', '计算并绘图', ...
-        'Position', [10 30 115 26], 'ButtonPushedFcn', @onCalc, ...
-        'BackgroundColor', [0.25 0.48 0.75], 'FontColor', [1 1 1]);
-    app.btnClear = uibutton(grpAct, 'Text', '清空曲线', ...
-        'Position', [135 30 100 26], 'ButtonPushedFcn', @onClear);
-    app.btnSticks = uibutton(grpAct, 'Text', '显示谱线', ...
-        'Position', [245 30 125 26], 'ButtonPushedFcn', @onSticks);
+    uilabel(pnlData, 'Text', '本地表', 'Position', [12 90 50 22]);
+    app.ddTables = uidropdown(pnlData, 'Position', [66 90 170 22], ...
+        'Items', {'(刷新)'}, 'ItemsData', {''});
+    app.btnRefresh = uibutton(pnlData, 'Text', '刷新', ...
+        'Position', [244 90 54 22], 'ButtonPushedFcn', @onRefreshTables);
+    app.edTable = uieditfield(pnlData, 'text', 'Value', 'CH4_1653', ...
+        'Position', [66 58 110 22], ...
+        'Tooltip', ['表名：字母/数字/下划线；ADD TO PLOT 自动命名下载，' ...
+            '也可手动指定后 Fetch']);
+    app.btnFetch = uibutton(pnlData, 'Text', 'Fetch', ...
+        'Position', [184 58 52 22], 'ButtonPushedFcn', @onFetch, ...
+        'Tooltip', '按当前气体/范围下载谱线到指定表名');
+    app.btnImport = uibutton(pnlData, 'Text', '导入.par', ...
+        'Position', [244 58 54 22], 'ButtonPushedFcn', @onImport);
+    app.lblTableInfo = uilabel(pnlData, 'Text', '', ...
+        'Position', [12 26 286 22], 'FontSize', 10, ...
+        'FontColor', [0.3 0.5 0.7]);
 
-    % --- 导出区 ---
-    grpExp = uipanel(pnl, 'Title', '导出', 'Position', [0 95 380 85], ...
-        'FontSize', 12, 'FontWeight', 'bold');
-    app.btnPNG = uibutton(grpExp, 'Text', '导出 PNG', ...
-        'Position', [10 25 85 26], 'ButtonPushedFcn', @onExportPNG);
-    app.btnCSV = uibutton(grpExp, 'Text', '导出 CSV', ...
-        'Position', [105 25 85 26], 'ButtonPushedFcn', @onExportCSV);
-    app.btnWS = uibutton(grpExp, 'Text', '导入工作区', ...
-        'Position', [200 25 170 26], 'ButtonPushedFcn', @onExportWS, ...
+    % 参数卡片与数据面板衔接：卡片底部到 165
+    card.Position = [10 165 310 585];
+
+    % ---------------- 右侧绘图区 ----------------
+    % 图下控件行
+    ctlY = 726;
+    uilabel(fig, 'Text', 'Y Axis', 'Position', [345 ctlY+3 42 22]);
+    app.ddYUnit = uidropdown(fig, 'Position', [390 ctlY 130 22], ...
+        'Items', {'Absorbance', 'Transmission'}, 'Value', 'Absorbance', ...
+        'Tooltip', 'Y 轴单位：前端换算 T=exp(-A)、A=-ln(T)，无需重新计算', ...
+        'ValueChangedFcn', @onYUnitChanged);
+    app.cbSum = uicheckbox(fig, 'Text', 'SHOW SUM', ...
+        'Position', [540 ctlY+2 95 22], ...
+        'Tooltip', ['叠加曲线：Absorbance 模式逐点相加 ΣA，' ...
+            'Transmission 模式逐点相乘 ΠT（吸收系数曲线不参与）'], ...
+        'ValueChangedFcn', @onSumToggled);
+    app.cbSticks = uicheckbox(fig, 'Text', '谱线棒状图', ...
+        'Position', [650 ctlY+2 100 22], 'Value', true, ...
+        'Tooltip', '显示/隐藏当前所选数据表的谱线棒状图', ...
+        'ValueChangedFcn', @onSticksToggled);
+    uibutton(fig, 'Text', 'CLEAR PLOTS', 'Position', [765 ctlY 100 24], ...
+        'ButtonPushedFcn', @onClear);
+    uibutton(fig, 'Text', 'SAVE PNG', 'Position', [875 ctlY 88 24], ...
+        'ButtonPushedFcn', @onExportPNG);
+    uibutton(fig, 'Text', 'SAVE CSV', 'Position', [971 ctlY 88 24], ...
+        'ButtonPushedFcn', @onExportCSV);
+    uibutton(fig, 'Text', '导入工作区', 'Position', [1067 ctlY 88 24], ...
+        'ButtonPushedFcn', @onExportWS, ...
         'Tooltip', '将全部已计算曲线以变量 hitran_curves 写入 MATLAB 基础工作区');
 
-    % ---------------- 右侧绘图区（像素位置固定，两图严格左右对齐） ----------------
-    app.axSpec = uiaxes(fig, 'Position', [410 300 740 460]);
-    title(app.axSpec, '光谱'); grid(app.axSpec, 'on');
-    app.axStick = uiaxes(fig, 'Position', [410 40 740 200]);
-    title(app.axStick, '谱线棒状图');
-    xlabel(app.axStick, '波数 cm^{-1}'); ylabel(app.axStick, '线强 S');
+    % 坐标区（像素位置固定，双图严格左右对齐）
+    app.axSpec = uiaxes(fig, 'Position', [345 300 920 410]);
+    xlabel(app.axSpec, 'Frequency (cm^{-1})');
+    ylabel(app.axSpec, 'Absorbance');
+    grid(app.axSpec, 'on');
+    app = setupUpperWlAxis(app);     % 上轴：波长 μm（反向）
 
-    % 曲线图例（右侧固定文本区，按绘图顺序对应默认色序；
-    % 不用 axes legend：其会压缩绘图区导致两坐标区绘图框错位）
-    app.legendLabel = uilabel(fig, 'Text', '', ...
-        'Position', [1158 300 112 460], 'VerticalAlignment', 'top', ...
-        'FontSize', 10, 'FontColor', [0.25 0.25 0.25]);
+    app.axStick = uiaxes(fig, 'Position', [345 170 920 110]);
+    ylabel(app.axStick, '线强 S');
+
+    % 图例表格（SpectraPlot 曲线管理表）
+    uilabel(fig, 'Text', '曲线列表', 'Position', [345 146 80 20], ...
+        'FontSize', 11, 'FontWeight', 'bold');
+    app.tblLegend = uitable(fig, 'Position', [345 10 790 132], ...
+        'ColumnName', {'颜色', '分子', '参数', '状态'}, ...
+        'ColumnWidth', {60, 110, 480, 90}, 'Data', {}, ...
+        'ColumnEditable', [false false false false], ...
+        'Tooltip', '点击选中行后，可用右侧按钮隐藏/显示或删除该曲线', ...
+        'CellSelectionCallback', @onRowSelected);
+    uibutton(fig, 'Text', '显隐', 'Position', [1145 118 120 26], ...
+        'ButtonPushedFcn', @onToggleVisible, ...
+        'Tooltip', '切换选中曲线的显示/隐藏');
+    uibutton(fig, 'Text', '删除', 'Position', [1145 84 120 26], ...
+        'ButtonPushedFcn', @onDeleteCurve, ...
+        'Tooltip', '删除选中曲线');
 
     % 悬停提示标签（初始隐藏）
     app.tip = uilabel(fig, 'Text', '', 'Position', [0 0 260 90], ...
         'BackgroundColor', [1 1 0.8], 'Visible', 'off', 'HandleVisibility', 'off');
 
+    % hover_line_info 依赖的横轴单位字段：主 X 轴恒为波数 cm-1
+    app.ddXUnit = uidropdown(fig, 'Position', [0 0 1 1], ...
+        'Items', {'cm-1', 'nm'}, 'Value', 'cm-1', 'Visible', 'off');
+
     fig.UserData = app;
     hover_line_info(fig);        % 注册悬停回调
 
-    % 初始化：连接自检 + 加载分子列表
+    % 初始化：连接自检 + 加载分子列表 + 波长联动
     % （struct 为值传递，初始化函数需返回最新 app 快照）
     app = autoConnect(app);
     app = loadMolecules(app);
-    app = updateWlHint(app);
+    app = syncRangeFields(app);
 end
 
 % ================================================================
@@ -211,13 +275,76 @@ function setApp(app)
 end
 
 function setStatus(app, txt, color)
-    if nargin < 3, color = [0.1 0.5 0.1]; end
-    app.lblStatus.Text = txt;
-    app.lblStatus.FontColor = color;
-    drawnow;
+    if nargin < 3, color = [0.6 0.9 0.6]; end   % 深底上用浅色
+    try
+        app.lblStatus.Text = txt;
+        app.lblStatus.FontColor = color;
+        drawnow;
+    catch
+        fprintf('[status] %s\n', txt);
+    end
 end
 
-% ---------------- 连接设置（顶栏功能区，弹窗按需打开） ----------------
+function setStatusErr(app, txt)
+    setStatus(app, txt, [1 0.65 0.65]);
+end
+
+% ---------------- 双 X 轴（上轴波长 μm，反向，随缩放联动） ----------------
+function app = setupUpperWlAxis(app)
+    % uiaxes 不提供第二个 X 标尺，叠加透明 axes 实现上侧波长轴：
+    % 绘图框与 axSpec 像素对齐，λ=1e4/ν 仿射映射保证刻度上下对位
+    ax = app.axSpec;
+    app.axWl = axes(app.fig, 'Units', 'pixels', ...
+        'Position', ax.Position, ...
+        'ActivePositionProperty', 'position', ...
+        'Color', 'none', 'Box', 'off', ...
+        'XAxisLocation', 'top', 'YColor', 'none', ...
+        'XDir', 'reverse', 'FontSize', ax.FontSize, ...
+        'PickableParts', 'none');
+    xlabel(app.axWl, 'Wavelength (μm)');
+    addlistener(ax, 'XLim', 'PostSet', @(~, ~) syncUpperWlAxis(app));
+    syncUpperWlAxis(app);
+end
+
+function syncUpperWlAxis(app)
+    try
+        axW = app.axWl;
+        axW.Position = app.axSpec.InnerPosition;
+        lim = app.axSpec.XLim;
+        if ~isfinite(lim(1)) || lim(1) <= 0
+            axW.XLim = [0 1];
+            axW.XAxis.TickLabels = {};
+            return;
+        end
+        axW.XLim = [1e4 / lim(2), 1e4 / lim(1)];
+        t = axW.XAxis.TickValues;
+        axW.XAxis.TickLabels = arrayfun(@(v) sprintf('%.5g', v), t, ...
+            'UniformOutput', false);
+    catch
+    end
+end
+
+% ---------------- ν ↔ λ 联动（λ(μm) = 1e4/ν(cm⁻¹)） ----------------
+function onNuChanged(src, ~)
+    app = getApp(src);
+    if app.rangeGuard, return; end
+    app = syncRangeFields(app);
+    setApp(app);
+end
+
+function app = syncRangeFields(app)
+    try
+        app.rangeGuard = true;
+        n1 = app.edNuMin.Value; n2 = app.edNuMax.Value;
+        app.edWlMin.Value = round(1e4 / n2, 5);   % λstart 对应 νend
+        app.edWlMax.Value = round(1e4 / n1, 5);   % λend 对应 νstart
+    catch
+    end
+    app.rangeGuard = false;
+    setApp(app);
+end
+
+% ---------------- 连接设置（导航条，弹窗按需打开） ----------------
 function onConnSettings(src, ~)
     app = getApp(src);
     openConnSettings(app);
@@ -256,7 +383,7 @@ function openConnSettings(app)
                 r.hapi_version, keyStr));
         catch e
             msg = ['连接失败：' e.message];
-            setStatus(app, msg, [0.8 0.1 0.1]);
+            setStatusErr(app, msg);
         end
         lblMsg.Text = msg;
         setApp(app);
@@ -273,7 +400,7 @@ function openConnSettings(app)
             setStatus(app, 'API key 已保存');
         catch e
             lblMsg.Text = ['保存失败：' e.message];
-            setStatus(app, e.message, [0.8 0.1 0.1]);
+            setStatusErr(app, e.message);
         end
         setApp(app);
     end
@@ -307,8 +434,7 @@ function app = autoConnect(app)
             msg0 = e2.message;
         end
     end
-    setStatus(app, ['后端未连接：' msg0 '（可点右上角"设置"检查）'], ...
-        [0.8 0.1 0.1]);
+    setStatusErr(app, ['后端未连接：' msg0 '（可点右上角"设置"检查）']);
     setApp(app);
 end
 
@@ -321,7 +447,7 @@ function onInstrChanged(src, ~)
     setApp(app);
 end
 
-% ---------------- 数据 ----------------
+% ---------------- 分子与本地表 ----------------
 function app = loadMolecules(app)
     try
         r = app.client.molecules();
@@ -339,10 +465,10 @@ function app = loadMolecules(app)
         idx = find([mols.id] == 6, 1);
         if ~isempty(idx), app.ddMol.Value = 6; end
         onMolChanged(app.ddMol, [], app);
-        onRefreshTables(app.btnRefresh, []);
+        onRefreshTables(app.btnRefresh, [], app);
     catch e
         app.ddMol.Items = {'后端未连接'};
-        setStatus(app, ['加载气体列表失败：' e.message], [0.8 0.1 0.1]);
+        setStatusErr(app, ['加载气体列表失败：' e.message]);
     end
     setApp(app);
 end
@@ -368,33 +494,31 @@ function onMolChanged(src, ~, appIn)
         app.ddIso.Value = 1;
     catch
     end
-    % 自动建议表名
+    % SpectraPlot 风格浓度标签：χ[formula]
     mols = app.molecules;
     if ~isempty(mols)
         idx = find([mols.id] == M, 1);
         if ~isempty(idx)
-            app.edTable.Value = sprintf('%s_%d_%d', mols(idx).formula, M, app.ddIso.Value);
+            app.lblConc.Text = sprintf('χ[%s] (摩尔分数)', mols(idx).formula);
         end
     end
     setApp(app);
 end
 
-function onRangeChanged(src, ~)
-    app = getApp(src);
-    updateWlHint(app);
+function currentFormula = getFormula(app)
+    currentFormula = '';
+    mols = app.molecules;
+    if isempty(mols), return; end
+    idx = find([mols.id] == app.ddMol.Value, 1);
+    if ~isempty(idx), currentFormula = char(mols(idx).formula); end
 end
 
-function app = updateWlHint(app)
-    try
-        n1 = app.edNuMin.Value; n2 = app.edNuMax.Value;
-        app.lblWl.Text = sprintf('~%.0f-%.0fnm', 1e7/n2, 1e7/n1);
-    catch
+function onRefreshTables(src, ~, appIn)
+    if nargin >= 3 && ~isempty(appIn)
+        app = appIn;
+    else
+        app = getApp(src);
     end
-    setApp(app);
-end
-
-function onRefreshTables(src, ~)
-    app = getApp(src);
     try
         r = app.client.tables();
         t = r.tables;
@@ -412,14 +536,14 @@ function onRefreshTables(src, ~)
             showTableInfo(app, t(end));
         end
     catch e
-        setStatus(app, e.message, [0.8 0.1 0.1]);
+        setStatusErr(app, e.message);
     end
     setApp(app);
 end
 
 function showTableInfo(app, t)
-    app.lblTableInfo.Text = sprintf('%.2f ~ %.2f cm-1 (%.0f~%.0f nm)', ...
-        t.nu_min, t.nu_max, 1e7/t.nu_max, 1e7/t.nu_min);
+    app.lblTableInfo.Text = sprintf('%.2f ~ %.2f cm⁻¹（%.0f~%.0f nm）', ...
+        t.nu_min, t.nu_max, 1e7 / t.nu_max, 1e7 / t.nu_min);
 end
 
 function onFetch(src, ~)
@@ -431,15 +555,15 @@ function onFetch(src, ~)
         uialert(app.fig, '请输入表名', '提示'); return;
     end
     setStatus(app, sprintf('正在从 HITRAN 下载 %s（%d,%d）...', tname, M, I), ...
-        [0.8 0.5 0]);
+        [1 0.85 0.5]);
     drawnow;
     try
         r = app.client.fetch(tname, M, I, numin, numax);
         app.tableMeta(tname) = struct('M', M, 'I', I);
         setStatus(app, sprintf('下载完成：%d 条谱线', r.rows));
-        onRefreshTables(app.btnRefresh, []);
+        onRefreshTables(app.btnRefresh, [], app);
     catch e
-        setStatus(app, e.message, [0.8 0.1 0.1]);
+        setStatusErr(app, e.message);
     end
     setApp(app);
 end
@@ -455,13 +579,38 @@ function onImport(src, ~)
     try
         r = app.client.importPar(fullfile(fp, fn), dlg{1});
         setStatus(app, sprintf('导入完成：%d 条谱线', r.rows));
-        onRefreshTables(app.btnRefresh, []);
+        onRefreshTables(app.btnRefresh, [], app);
     catch e
-        setStatus(app, e.message, [0.8 0.1 0.1]);
+        setStatusErr(app, e.message);
     end
 end
 
-% ---------------- 计算与绘图 ----------------
+% ---------------- 计算与绘图（ADD TO PLOT） ----------------
+function tname = autoTableName(app)
+    f = getFormula(app);
+    tname = sprintf('%s_%d_%d', f, round(app.edNuMin.Value), ...
+        round(app.edNuMax.Value));
+end
+
+function [tname, app] = ensureTable(app, tname, M, I, numin, numax)
+    % 本地已有表则直接返回，否则自动从 HITRAN 下载（SpectraPlot 式体验）
+    % struct 为值传递，tableMeta 更新必须随 app 返回
+    try
+        r = app.client.tables();
+        names = {r.tables.name};
+        if any(strcmp(names, tname))
+            return;
+        end
+    catch
+    end
+    setStatus(app, sprintf('自动下载谱线数据 %s...', tname), [1 0.85 0.5]);
+    drawnow;
+    r = app.client.fetch(tname, M, I, numin, numax);
+    app.tableMeta(tname) = struct('M', M, 'I', I);
+    setStatus(app, sprintf('已下载 %d 条谱线', r.rows));
+    setApp(app);
+end
+
 function meta = resolveMeta(app, tname)
     if isKey(app.tableMeta, tname)
         meta = app.tableMeta(tname);
@@ -480,74 +629,198 @@ function meta = resolveMeta(app, tname)
     end
 end
 
-function onCalc(src, ~)
+function onAddToPlot(src, ~)
     app = getApp(src);
-    tname = app.ddTables.Value;
-    if isempty(tname), uialert(app.fig, '请先获取或选择数据表', '提示'); return; end
-    setStatus(app, '计算中...', [0.8 0.5 0]); drawnow;
+    M = app.ddMol.Value; I = app.ddIso.Value;
+    numin = app.edNuMin.Value; numax = app.edNuMax.Value;
+    if numax <= numin
+        uialert(app.fig, 'νend 必须大于 νstart', '提示'); return;
+    end
+    tname = autoTableName(app);
+    setStatus(app, '计算中...', [1 0.85 0.5]); drawnow;
     try
+        [tname, app] = ensureTable(app, tname, M, I, numin, numax);
         meta = resolveMeta(app, tname);
         conc = app.edConc.Value;
+        T = app.edT.Value; P = app.edP.Value; L = app.edL.Value;
         spec = struct();
         spec.components = struct('table', tname, 'M', meta.M, 'I', meta.I, ...
             'concentration', conc);
-        spec.T = app.edT.Value;
-        spec.p = app.edP.Value;
-        spec.l = app.edL.Value;
+        spec.T = T; spec.p = P; spec.l = L;
         spec.spectrum = app.ddSpec.Value;
         spec.lineshape = app.ddShape.Value;
-        spec.numin = app.edNuMin.Value;
-        spec.numax = app.edNuMax.Value;
+        spec.numin = numin; spec.numax = numax;
         spec.step = app.edStep.Value;
         if ~strcmp(app.ddInstr.Value, 'none')
             spec.instrument = app.ddInstr.Value;
             spec.resolution = app.edRes.Value;
         end
-        r = app.client.spectrum(spec);
 
-        curve = struct('wn', r.wavenumber, 'y', r.values, ...
-            'label', sprintf('%s %s T=%.0fK c=%.1e', tname, ...
-                app.ddSpec.Items{strcmp(app.ddSpec.ItemsData, spec.spectrum)}, ...
-                spec.T, conc), ...
-            'table', tname, 'yunit', r.y_unit);
-        app.curves{end+1} = curve; %#ok<AGROW>
+        % 去重：完全相同的参数组合不重复添加（同 SpectraPlot）
+        key = sprintf('%s|%g|%g|%g|%g|%g|%g|%s', tname, conc, T, P, L, ...
+            numin, numax, spec.spectrum);
+        for k = 1:numel(app.curves)
+            if isfield(app.curves{k}, 'key') && strcmp(app.curves{k}.key, key)
+                setStatus(app, '相同参数的曲线已在图中（去重）');
+                return;
+            end
+        end
+
+        r = app.client.spectrum(spec);
+        ci = mod(numel(app.curves), size(app.palette, 1)) + 1;
+        f = getFormula(app);
+        % 图例格式同 SpectraPlot：CO, HITRAN: χ=0.01, T=300K, P=1atm, L=1cm
+        legendTxt = sprintf('%s, HITRAN: χ=%.3g, T=%gK, P=%gatm, L=%gcm', ...
+            f, conc, T, P, L);
+        curve = struct( ...
+            'wn', r.wavenumber, 'y', r.values, 'yunit', r.y_unit, ...
+            'stype', spec.spectrum, 'color', app.palette(ci, :), ...
+            'visible', true, 'key', key, 'table', tname, ...
+            'formula', f, 'legend', legendTxt, 'label', legendTxt);
+        app.curves{end+1} = curve;
         setApp(app);
         redrawAll(app);
-        setStatus(app, sprintf('计算完成：%d 点', r.n_points));
+        if app.cbSticks.Value
+            drawSticks(app, tname);
+        end
+        setStatus(app, sprintf('已添加：%s（%d 点）', legendTxt, r.n_points));
     catch e
-        setStatus(app, e.message, [0.8 0.1 0.1]);
+        setStatusErr(app, e.message);
     end
 end
 
-function onClear(src, ~)
-    app = getApp(src);
-    app.curves = {};
-    setApp(app);
-    % 同步清空光谱与谱线棒状图（含悬停数据）；
-    % cla 会重置坐标区边距，显式恢复 Position 保证两图永远对齐
-    cla(app.axSpec); title(app.axSpec, '光谱'); grid(app.axSpec, 'on');
-    cla(app.axStick); title(app.axStick, '谱线棒状图');
-    xlabel(app.axStick, '波数 cm^{-1}'); ylabel(app.axStick, '线强 S');
-    set(app.axStick, 'YScale', 'linear');
-    app.axStick.UserData = [];
-    app.axSpec.Position  = [410 300 740 460];
-    app.axStick.Position = [410 40 740 200];
-    app.legendLabel.Text = '';
-    alignAxes(app);
-end
-
-function onSticks(src, ~)
-    app = getApp(src);
-    tname = app.ddTables.Value;
-    if isempty(tname), uialert(app.fig, '请先选择数据表', '提示'); return; end
+function drawSticks(app, tname)
     try
         r = app.client.lines(tname, app.edNuMin.Value, app.edNuMax.Value, 5000);
         plot_spectrum([], app.axStick, [], [], '', 'cm-1', r.lines);
         alignAxes(app);
-        setStatus(app, sprintf('已显示 %d 条谱线（悬停查看详情）', numel(r.lines)));
     catch e
-        setStatus(app, e.message, [0.8 0.1 0.1]);
+        setStatusErr(app, e.message);
     end
+end
+
+% ---------------- Y 轴单位切换（前端换算，无需重新计算） ----------------
+% 本后端 absorption 定义为 A=1-exp(-kL)，透过率 T=exp(-kL)，
+% 故换算关系为 T=1-A、A=1-T（与 SpectraPlot 光深约定 exp(-τ) 不同）。
+function onYUnitChanged(src, ~)
+    app = getApp(src);
+    if isempty(app.curves)
+        setApp(app); return;
+    end
+    hasAbscoeff = false;
+    for k = 1:numel(app.curves)
+        if strcmp(app.curves{k}.stype, 'abscoeff'), hasAbscoeff = true; end
+    end
+    redrawAll(app);
+    if hasAbscoeff
+        setStatus(app, ['已切换 Y 轴；注意：吸收系数曲线不参与换算，' ...
+            '仍按原单位显示']);
+    end
+    setApp(app);
+end
+
+% ---------------- SHOW SUM（Absorbance 相加 / Transmission 相乘） ----------------
+function onSumToggled(src, ~)
+    app = getApp(src);
+    redrawAll(app);
+    setApp(app);
+end
+
+function plotSum(app)
+    % 公共网格取第一条可见吸收谱曲线的波数轴，其余线性插值后叠加
+    idx = find(cellfun(@(c) strcmp(c.stype, 'absorption') && c.visible, ...
+        app.curves));
+    if numel(idx) < 2, return; end
+    wn = app.curves{idx(1)}.wn;
+    trans = strcmp(app.ddYUnit.Value, 'Transmission');
+    s = zeros(size(wn));
+    if trans, s(:) = 1; end
+    for j = idx
+        c = app.curves{j};
+        v = interp1(c.wn, c.y, wn, 'linear', 'extrap');
+        if trans
+            s = s .* (1 - v);     % ΠT = Π(1-A)
+        else
+            s = s + v;            % ΣA
+        end
+    end
+    if trans
+        sumName = 'Total Transmission';
+    else
+        sumName = 'Absorbance Sum';
+    end
+    plot(app.axSpec, wn, s, 'Color', [0 0.53 0.53], 'LineWidth', 1.6, ...
+        'LineStyle', '--', 'DisplayName', sumName);
+end
+
+% ---------------- 清空 ----------------
+function onClear(src, ~)
+    app = getApp(src);
+    app.curves = {};
+    app.selRow = [];
+    app.cbSum.Value = false;
+    setApp(app);
+    % 同步清空光谱与谱线棒状图（含悬停数据）；
+    % cla 会重置坐标区边距，显式恢复 Position 保证两图永远对齐
+    cla(app.axSpec); grid(app.axSpec, 'on');
+    xlabel(app.axSpec, 'Frequency (cm^{-1})');
+    ylabel(app.axSpec, 'Absorbance');
+    cla(app.axStick); ylabel(app.axStick, '线强 S');
+    set(app.axStick, 'YScale', 'linear');
+    app.axStick.UserData = [];
+    app.axSpec.Position  = [345 300 920 410];
+    app.axStick.Position = [345 170 920 110];
+    app.tblLegend.Data = {};
+    syncUpperWlAxis(app);
+    alignAxes(app);
+    setStatus(app, '已清空全部曲线');
+end
+
+function onSticksToggled(src, ~)
+    app = getApp(src);
+    if src.Value
+        tname = app.ddTables.Value;
+        if isempty(tname)
+            setStatusErr(app, '请先选择数据表');
+            src.Value = false;
+            setApp(app);
+            return;
+        end
+        drawSticks(app, tname);
+    else
+        cla(app.axStick); ylabel(app.axStick, '线强 S');
+        app.axStick.UserData = [];
+        setApp(app);
+    end
+end
+
+% ---------------- 重绘 ----------------
+function redrawAll(app)
+    cla(app.axSpec); hold(app.axSpec, 'on');
+    trans = strcmp(app.ddYUnit.Value, 'Transmission');
+    for k = 1:numel(app.curves)
+        c = app.curves{k};
+        if ~c.visible, continue; end
+        y = c.y;
+        if strcmp(c.stype, 'absorption')
+            if trans, y = 1 - y; end      % A -> T
+        end
+        plot(app.axSpec, c.wn, y, 'Color', c.color, 'LineWidth', 1.3);
+    end
+    if app.cbSum.Value
+        plotSum(app);
+    end
+    xlabel(app.axSpec, 'Frequency (cm^{-1})');
+    if trans
+        ylabel(app.axSpec, 'Transmission');
+    else
+        ylabel(app.axSpec, 'Absorbance');
+    end
+    grid(app.axSpec, 'on');
+    syncUpperWlAxis(app);       % cla 会重置坐标区属性，重新同步上轴
+    updateLegendTable(app);
+    alignAxes(app);
+    setApp(app);
 end
 
 function alignAxes(app)
@@ -555,7 +828,6 @@ function alignAxes(app)
     % InnerPosition 由 Position 与自动边距（刻度标签宽度）共同决定，
     % 故用迭代反馈同时收敛宽度与左沿，并把棒状图横轴范围同步为
     % 当前光谱范围，保证谱线与光谱峰上下严格对位。
-    % 先同步横轴范围（刻度标签变化会影响自动边距），再迭代对齐
     if ~isempty(app.curves)
         lim = app.axSpec.XLim;
         if ~isinf(lim(1))
@@ -574,38 +846,59 @@ function alignAxes(app)
     end
 end
 
-function redrawAll(app)
-    cla(app.axSpec); hold(app.axSpec, 'on');
-    xunit = app.ddXUnit.Value;
-    for k = 1:numel(app.curves)
+% ---------------- 曲线图例表格 ----------------
+function updateLegendTable(app)
+    n = numel(app.curves);
+    data = cell(n, 4);
+    for k = 1:n
         c = app.curves{k};
-        if strcmp(xunit, 'nm')
-            x = 1e7 ./ c.wn;
+        data{k, 1} = sprintf('#%02X%02X%02X', round(c.color * 255));
+        data{k, 2} = c.formula;
+        data{k, 3} = c.legend;
+        if c.visible
+            data{k, 4} = '显示';
         else
-            x = c.wn;
+            data{k, 4} = '隐藏';
         end
-        plot(app.axSpec, x, c.y, 'LineWidth', 1.2);
     end
-    if ~isempty(app.curves)
-        ylabel(app.axSpec, sprintf('(%s)', app.curves{end}.yunit));
-        % 图例写入右侧固定文本区（行序=绘图顺序=默认色序）
-        items = cell(1, numel(app.curves));
-        for k = 1:numel(app.curves)
-            c = app.curves{k};
-            items{k} = sprintf('%d. %s (T=%.0fK)', k, c.table, ...
-                str2double(regexp(c.label, 'T=(\d+)K', 'tokens', 'once')));
-        end
-        app.legendLabel.Text = strjoin(items, newline);
+    app.tblLegend.Data = data;
+end
+
+function onRowSelected(src, ev)
+    fig0 = ancestor(src, 'figure');
+    app = fig0.UserData;
+    if isempty(ev.Indices)
+        app.selRow = [];
     else
-        app.legendLabel.Text = '';
+        app.selRow = ev.Indices(1, 1);
     end
-    if strcmp(xunit, 'nm')
-        xlabel(app.axSpec, '波长 nm'); set(app.axSpec, 'XDir', 'reverse');
-    else
-        xlabel(app.axSpec, '波数 cm^{-1}'); set(app.axSpec, 'XDir', 'normal');
+    setApp(app);
+end
+
+function onToggleVisible(src, ~)
+    app = getApp(src);
+    k = app.selRow;
+    if isempty(k) || k > numel(app.curves)
+        uialert(app.fig, '请先在曲线列表中点击选择一条曲线', '提示');
+        return;
     end
-    grid(app.axSpec, 'on');
-    alignAxes(app);
+    app.curves{k}.visible = ~app.curves{k}.visible;
+    setApp(app);
+    redrawAll(app);
+end
+
+function onDeleteCurve(src, ~)
+    app = getApp(src);
+    k = app.selRow;
+    if isempty(k) || k > numel(app.curves)
+        uialert(app.fig, '请先在曲线列表中点击选择一条曲线', '提示');
+        return;
+    end
+    app.curves(k) = [];
+    app.selRow = [];
+    setApp(app);
+    redrawAll(app);
+    setStatus(app, sprintf('已删除曲线，剩余 %d 条', numel(app.curves)));
 end
 
 % ---------------- 导出 ----------------
@@ -623,7 +916,7 @@ function onExportWS(src, ~)
     % 将全部曲线写入基础工作区变量 hitran_curves
     app = getApp(src);
     if isempty(app.curves)
-        uialert(app.fig, '暂无曲线数据，请先计算并绘图', '提示');
+        uialert(app.fig, '暂无曲线数据，请先 ADD TO PLOT', '提示');
         return;
     end
     out = struct('table', {}, 'label', {}, 'yunit', {}, ...

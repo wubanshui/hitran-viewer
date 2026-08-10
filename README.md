@@ -8,12 +8,18 @@
 
 ## 主要功能
 
-- 在线 fetch HITRAN 谱线数据（支持手动导入 .par/.data 文件兜底）
-- 吸收系数 / 透过率 / 吸收谱计算（Voigt、Lorentz、Gaussian、HT 线型，TIPS 配分函数）
-- 多曲线叠加对比，评估交叉干扰
+界面参照 [SpectraPlot](https://spectraplot.com) Absorption 工具的交互范式（深藏青导航条 + 左侧参数卡片 + 右侧绘图区）：
+
+- **ADD TO PLOT 一键计算**：自动下载所需谱线并叠加曲线，相同参数自动去重
+- **ν/λ 双向联动**输入（λ(μm)=1e4/ν(cm⁻¹)），光谱图双 X 轴（下波数 / 上波长反向）
+- **Y 轴单位切换** Absorbance/Transmission（前端换算 T=1−A，无需重新计算）
+- **SHOW SUM** 叠加曲线（Absorbance 逐点相加、Transmission 逐点相乘）
+- **曲线图例表格**：色值 / 分子 / 参数摘要 / 显隐 / 删除
 - 谱线棒状图，鼠标悬停自动吸附最近吸收线并显示参数（波数、波长、线强、量子标识）
+- 吸收系数 / 透过率 / 吸收谱计算（Voigt、Lorentz、Gaussian、HT 线型，TIPS 配分函数）
 - 仪器函数卷积（sinc/gaussian/rectangular/triangular）
-- 波数/波长双单位、PNG/CSV 导出
+- 在线 fetch HITRAN 谱线数据（支持手动导入 .par/.data 文件兜底）
+- PNG/CSV 导出、一键导入 MATLAB 工作区
 
 ## 目录结构
 
@@ -70,12 +76,12 @@ hitran-viewer/
 
 ## 选线工作流示例（1653 nm 甲烷）
 
-1. 界面中选择 CH4（同位素 1），波数范围 6040–6060 cm⁻¹，点击"Fetch 下载"
-2. 同样方法下载干扰气体（H2O、CO2、NH3、C2H2 等）
-3. 设置温度 296 K、压力 1 atm、光程与浓度，选择"吸收系数"，点击"计算并绘图"
-4. 切换不同气体表重复计算，曲线自动叠加对比
-5. 点击"显示谱线"绘制棒状图，鼠标悬停查看任意吸收线参数
-6. 导出 PNG/CSV，或点击"导入工作区"将全部曲线写入 MATLAB 基础工作区变量 `hitran_curves`
+1. 左侧卡片选择 CH4（同位素 1），νstart/νend 填 6040–6060 cm⁻¹（λ 输入框自动联动）
+2. 设置 T=296 K、P=1 atm、χ[CH4]=0.01、L，点击 **ADD TO PLOT**（首次自动从 HITRAN 下载谱线）
+3. 切换气体（H2O、CO2、NH3、C2H2 等）重复 ADD TO PLOT，曲线自动叠加对比
+4. 勾选 SHOW SUM 查看总透过率；Y Axis 下拉切换 Absorbance/Transmission
+5. 勾选"谱线棒状图"，鼠标悬停查看任意吸收线参数；图例表格中选中行可显隐/删除
+6. SAVE PNG / SAVE CSV，或"导入工作区"将全部曲线写入 MATLAB 基础工作区变量 `hitran_curves`
 
 验证脚本 `matlab/verify_1653nm.m` 给出的参考结果：目标线 6046.9636 cm⁻¹（1653.72 nm），S = 1.43e-21。
 
