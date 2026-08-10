@@ -56,7 +56,7 @@ hitran-viewer/
 2. **配置 HITRAN API key（可选但推荐）**
 
    免费注册 https://hitran.org 账号，在个人主页 https://hitran.org/profile/ 生成 API key；
-   复制 `backend/settings.template.json` 为 `backend/settings.json` 填入，或在 MATLAB 界面中点击"设置 API key"。
+   复制 `backend/settings.template.json` 为 `backend/settings.json` 填入，或在 MATLAB 界面顶栏点击"连接设置"配置。
    （官方文档注明下载数据需要 API key 且有每日请求限额；实测 `/lbl/api` 端点小流量请求无 key 也可用。）
 
 3. **启动后端**：双击 `start_backend.bat`（或 `python backend/app.py`）

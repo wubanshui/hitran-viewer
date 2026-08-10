@@ -3,6 +3,10 @@ function app = hitran_gui()
 %   依赖：后端服务已启动（默认 http://127.0.0.1:5000）
 %   运行：在 MATLAB 中执行 hitran_gui
 %
+%   布局：顶栏为功能区（状态显示 + 连接设置入口），左侧依次为
+%   数据、环境与计算参数、操作、导出区块；连接/API key 等低频
+%   设置收进"连接设置"弹窗，按需打开。
+%
 %   功能：fetch HITRAN 数据、吸收系数/透过率/吸收谱计算与绘图、
 %   多曲线叠加、谱线棒状图、鼠标悬停显示谱线信息、PNG/CSV 导出。
 
@@ -18,27 +22,26 @@ function app = hitran_gui()
     app.curves     = {};                 % 已绘制曲线 cell of struct
     fig.UserData   = app;
 
-    % ---------------- 左侧面板 ----------------
-    pnl = uipanel(fig, 'Position', [10 10 340 760], 'BorderType', 'none');
+    % ---------------- 顶栏功能区 ----------------
+    bar = uipanel(fig, 'Position', [10 735 1260 38], 'BorderType', 'line');
+    uilabel(bar, 'Text', 'hitran-viewer', 'Position', [10 8 105 22], ...
+        'FontWeight', 'bold');
+    app.lblStatus = uilabel(bar, 'Text', '未连接', ...
+        'Position', [120 8 1000 22], 'FontColor', [0.6 0.6 0.6]);
+    app.btnConnSettings = uibutton(bar, 'Text', '连接设置', ...
+        'Position', [1145 6 105 26], 'ButtonPushedFcn', @onConnSettings);
 
-    % --- 连接区 ---
-    grpConn = uipanel(pnl, 'Title', '连接', 'Position', [0 660 340 100]);
-    uilabel(grpConn, 'Text', '后端地址', 'Position', [10 40 60 22]);
-    app.edServer = uieditfield(grpConn, 'text', ...
-        'Value', 'http://127.0.0.1:5000', 'Position', [75 40 155 22]);
-    app.btnTest = uibutton(grpConn, 'Text', '测试连接', ...
-        'Position', [240 40 90 22], 'ButtonPushedFcn', @onTestConn);
-    app.lblStatus = uilabel(grpConn, 'Text', '未连接', ...
-        'Position', [10 8 320 22], 'FontColor', [0.6 0.6 0.6]);
+    % ---------------- 左侧面板 ----------------
+    pnl = uipanel(fig, 'Position', [10 10 380 720], 'BorderType', 'none');
 
     % --- 数据区 ---
-    grpData = uipanel(pnl, 'Title', '数据', 'Position', [0 420 340 235]);
+    grpData = uipanel(pnl, 'Title', '数据', 'Position', [0 485 380 235]);
     uilabel(grpData, 'Text', '气体', 'Position', [10 178 34 22]);
-    app.ddMol = uidropdown(grpData, 'Position', [50 178 130 22], ...
+    app.ddMol = uidropdown(grpData, 'Position', [50 178 150 22], ...
         'Items', {'加载中...'}, 'ItemsData', {0}, ...
         'ValueChangedFcn', @onMolChanged);
-    uilabel(grpData, 'Text', '同位素', 'Position', [188 178 46 22]);
-    app.ddIso = uidropdown(grpData, 'Position', [236 178 94 22], ...
+    uilabel(grpData, 'Text', '同位素', 'Position', [208 178 46 22]);
+    app.ddIso = uidropdown(grpData, 'Position', [258 178 112 22], ...
         'Items', {'1'}, 'ItemsData', {1});
 
     uilabel(grpData, 'Text', '波数下限 cm-1', 'Position', [10 148 80 22]);
@@ -47,91 +50,89 @@ function app = hitran_gui()
     uilabel(grpData, 'Text', '上限', 'Position', [168 148 28 22]);
     app.edNuMax = uieditfield(grpData, 'numeric', 'Value', 6060, ...
         'Position', [200 148 65 22], 'ValueChangedFcn', @onRangeChanged);
-    app.lblWl = uilabel(grpData, 'Text', '', 'Position', [272 148 60 22], ...
+    app.lblWl = uilabel(grpData, 'Text', '', 'Position', [272 148 98 22], ...
         'FontSize', 10, 'FontColor', [0.3 0.5 0.7]);
 
     uilabel(grpData, 'Text', '表名', 'Position', [10 118 34 22]);
     app.edTable = uieditfield(grpData, 'text', 'Value', 'CH4_1653', ...
-        'Position', [50 118 120 22]);
+        'Position', [50 118 140 22]);
     app.btnFetch = uibutton(grpData, 'Text', 'Fetch 下载', ...
-        'Position', [180 118 90 22], 'ButtonPushedFcn', @onFetch);
+        'Position', [200 118 95 22], 'ButtonPushedFcn', @onFetch);
     app.btnImport = uibutton(grpData, 'Text', '导入 .par', ...
-        'Position', [278 118 52 22], 'ButtonPushedFcn', @onImport);
+        'Position', [303 118 67 22], 'ButtonPushedFcn', @onImport);
 
     uilabel(grpData, 'Text', '本地表', 'Position', [10 88 46 22]);
-    app.ddTables = uidropdown(grpData, 'Position', [60 88 200 22], ...
+    app.ddTables = uidropdown(grpData, 'Position', [60 88 240 22], ...
         'Items', {'(刷新)'}, 'ItemsData', {''});
     app.btnRefresh = uibutton(grpData, 'Text', '刷新', ...
-        'Position', [268 88 62 22], 'ButtonPushedFcn', @onRefreshTables);
+        'Position', [308 88 62 22], 'ButtonPushedFcn', @onRefreshTables);
 
     app.lblTableInfo = uilabel(grpData, 'Text', '', ...
-        'Position', [10 58 320 22], 'FontSize', 10, ...
+        'Position', [10 58 360 22], 'FontSize', 10, ...
         'FontColor', [0.3 0.5 0.7]);
-    app.btnSetKey = uibutton(grpData, 'Text', '设置 API key', ...
-        'Position', [10 10 100 22], 'ButtonPushedFcn', @onSetKey);
 
     % --- 参数区 ---
-    grpParam = uipanel(pnl, 'Title', '环境与计算参数', 'Position', [0 215 340 200]);
-    uilabel(grpParam, 'Text', '温度 K', 'Position', [10 142 50 22]);
+    grpParam = uipanel(pnl, 'Title', '环境与计算参数', 'Position', [0 280 380 200]);
+    uilabel(grpParam, 'Text', '温度 K', 'Position', [10 142 45 22]);
     app.edT = uieditfield(grpParam, 'numeric', 'Value', 296, ...
-        'Position', [65 142 60 22]);
-    uilabel(grpParam, 'Text', '压力 atm', 'Position', [140 142 60 22]);
+        'Position', [60 142 60 22]);
+    uilabel(grpParam, 'Text', '压力 atm', 'Position', [135 142 55 22]);
     app.edP = uieditfield(grpParam, 'numeric', 'Value', 1, ...
-        'Position', [205 142 55 22]);
-    uilabel(grpParam, 'Text', '光程 cm', 'Position', [268 142 50 22]);
+        'Position', [195 142 60 22]);
+    uilabel(grpParam, 'Text', '光程 cm', 'Position', [270 142 45 22]);
     app.edL = uieditfield(grpParam, 'numeric', 'Value', 10, ...
-        'Position', [318 142 55 22]);
+        'Position', [315 142 55 22]);
 
     uilabel(grpParam, 'Text', '浓度(摩尔分数)', 'Position', [10 112 90 22]);
     app.edConc = uieditfield(grpParam, 'numeric', 'Value', 0.01, ...
-        'Position', [105 112 70 22]);
-    uilabel(grpParam, 'Text', '线型', 'Position', [185 112 30 22]);
-    app.ddShape = uidropdown(grpParam, 'Position', [218 112 110 22], ...
+        'Position', [105 112 75 22]);
+    uilabel(grpParam, 'Text', '线型', 'Position', [195 112 30 22]);
+    app.ddShape = uidropdown(grpParam, 'Position', [230 112 140 22], ...
         'Items', {'Voigt', 'Lorentz', 'Gaussian(Doppler)', 'HT'}, ...
         'ItemsData', {'voigt', 'lorentz', 'gaussian', 'ht'}, ...
         'Value', 'voigt');
 
     uilabel(grpParam, 'Text', '网格步长 cm-1', 'Position', [10 82 85 22]);
     app.edStep = uieditfield(grpParam, 'numeric', 'Value', 0.002, ...
-        'Position', [100 82 60 22]);
-    uilabel(grpParam, 'Text', '仪器函数', 'Position', [170 82 60 22]);
-    app.ddInstr = uidropdown(grpParam, 'Position', [235 82 95 22], ...
+        'Position', [100 82 65 22]);
+    uilabel(grpParam, 'Text', '仪器函数', 'Position', [180 82 60 22]);
+    app.ddInstr = uidropdown(grpParam, 'Position', [245 82 125 22], ...
         'Items', {'none', 'sinc', 'gaussian', 'rectangular', 'triangular'}, ...
         'Value', 'none');
-    app.edRes = uieditfield(grpParam, 'numeric', 'Value', 0.1, ...
-        'Position', [235 52 60 22], 'Enable', 'off');
     app.lblRes = uilabel(grpParam, 'Text', '分辨率 cm-1', ...
-        'Position', [160 52 70 22], 'Enable', 'off');
+        'Position', [180 52 60 22], 'Enable', 'off');
+    app.edRes = uieditfield(grpParam, 'numeric', 'Value', 0.1, ...
+        'Position', [245 52 65 22], 'Enable', 'off');
 
     uilabel(grpParam, 'Text', '光谱类型', 'Position', [10 22 60 22]);
-    app.ddSpec = uidropdown(grpParam, 'Position', [75 22 120 22], ...
+    app.ddSpec = uidropdown(grpParam, 'Position', [75 22 130 22], ...
         'Items', {'吸收系数', '透过率', '吸收谱'}, ...
         'ItemsData', {'abscoeff', 'transmittance', 'absorption'}, ...
         'Value', 'abscoeff');
-    uilabel(grpParam, 'Text', '横轴', 'Position', [205 22 30 22]);
-    app.ddXUnit = uidropdown(grpParam, 'Position', [240 22 90 22], ...
+    uilabel(grpParam, 'Text', '横轴', 'Position', [215 22 30 22]);
+    app.ddXUnit = uidropdown(grpParam, 'Position', [250 22 120 22], ...
         'Items', {'cm-1', 'nm'}, 'Value', 'cm-1');
 
     % --- 操作区 ---
-    grpAct = uipanel(pnl, 'Title', '操作', 'Position', [0 120 340 90]);
+    grpAct = uipanel(pnl, 'Title', '操作', 'Position', [0 185 380 90]);
     app.btnCalc = uibutton(grpAct, 'Text', '计算并绘图', ...
-        'Position', [10 30 110 26], 'ButtonPushedFcn', @onCalc);
+        'Position', [10 30 115 26], 'ButtonPushedFcn', @onCalc);
     app.btnClear = uibutton(grpAct, 'Text', '清空曲线', ...
-        'Position', [130 30 90 26], 'ButtonPushedFcn', @onClear);
+        'Position', [135 30 100 26], 'ButtonPushedFcn', @onClear);
     app.btnSticks = uibutton(grpAct, 'Text', '显示谱线', ...
-        'Position', [230 30 100 26], 'ButtonPushedFcn', @onSticks);
+        'Position', [245 30 125 26], 'ButtonPushedFcn', @onSticks);
 
     % --- 导出区 ---
-    grpExp = uipanel(pnl, 'Title', '导出', 'Position', [0 30 340 85]);
+    grpExp = uipanel(pnl, 'Title', '导出', 'Position', [0 95 380 85]);
     app.btnPNG = uibutton(grpExp, 'Text', '导出 PNG', ...
-        'Position', [10 25 100 26], 'ButtonPushedFcn', @onExportPNG);
+        'Position', [10 25 115 26], 'ButtonPushedFcn', @onExportPNG);
     app.btnCSV = uibutton(grpExp, 'Text', '导出 CSV', ...
-        'Position', [120 25 100 26], 'ButtonPushedFcn', @onExportCSV);
+        'Position', [135 25 115 26], 'ButtonPushedFcn', @onExportCSV);
 
     % ---------------- 右侧绘图区 ----------------
-    app.axSpec = uiaxes(fig, 'Position', [380 300 880 460]);
+    app.axSpec = uiaxes(fig, 'Position', [410 300 850 460]);
     title(app.axSpec, '光谱'); grid(app.axSpec, 'on');
-    app.axStick = uiaxes(fig, 'Position', [380 40 880 200]);
+    app.axStick = uiaxes(fig, 'Position', [410 40 850 200]);
     title(app.axStick, '谱线棒状图');
     xlabel(app.axStick, '波数 cm^{-1}'); ylabel(app.axStick, '线强 S');
 
@@ -142,14 +143,17 @@ function app = hitran_gui()
     fig.UserData = app;
     hover_line_info(fig);        % 注册悬停回调
 
-    % 初始化：加载分子列表
-    loadMolecules();
-    updateWlHint();
+    % 初始化：连接自检 + 加载分子列表
+    % （struct 为值传递，初始化函数需返回最新 app 快照）
+    app = autoConnect(app);
+    app = loadMolecules(app);
+    app = updateWlHint(app);
 end
 
 % ================================================================
-%  回调与辅助函数（嵌套于主函数，共享 app 所在作用域不可行——
-%  此处通过 fig.UserData 传递状态）
+%  回调与辅助函数。状态一律通过 fig.UserData / 显式传参获取，
+%  不使用 gcf（创建 uifigure 不会改变当前 figure，gcf 可能
+%  指向其它 figure 导致 UserData 为空、点索引报错）。
 % ================================================================
 
 function app = getApp(src)
@@ -168,40 +172,97 @@ function setStatus(app, txt, color)
     drawnow;
 end
 
-% ---------------- 连接 ----------------
-function onTestConn(src, ~)
+% ---------------- 连接设置（顶栏功能区，弹窗按需打开） ----------------
+function onConnSettings(src, ~)
     app = getApp(src);
-    app.client.BaseURL = app.edServer.Value;
+    openConnSettings(app);
+end
+
+function openConnSettings(app)
+    dlg = uifigure('Name', '连接设置', 'Position', [480 380 440 220], ...
+        'Resize', 'off', 'WindowStyle', 'modal');
+    uilabel(dlg, 'Text', '后端地址', 'Position', [20 160 65 22]);
+    edSrv = uieditfield(dlg, 'text', 'Value', app.client.BaseURL, ...
+        'Position', [90 160 235 22]);
+    uibutton(dlg, 'Text', '测试连接', 'Position', [335 160 85 22], ...
+        'ButtonPushedFcn', @doTest);
+    uilabel(dlg, 'Text', 'API key', 'Position', [20 120 65 22]);
+    edKey = uieditfield(dlg, 'text', 'Position', [90 120 235 22], ...
+        'Placeholder', 'hitran.org 个人主页生成，留空不修改');
+    uibutton(dlg, 'Text', '保存 key', 'Position', [335 120 85 22], ...
+        'ButtonPushedFcn', @doSaveKey);
+    lblMsg = uilabel(dlg, 'Text', '', 'Position', [20 20 400 80], ...
+        'VerticalAlignment', 'top', 'FontColor', [0.2 0.2 0.6]);
+
+    function doTest(~, ~)
+        app.client.BaseURL = edSrv.Value;
+        try
+            r = app.client.health();
+            keyStr = '已配置';
+            if ~r.api_key_set, keyStr = '未配置（fetch 可能受限）'; end
+            msg = sprintf('连接成功：HAPI %s，API key %s', r.hapi_version, keyStr);
+            setStatus(app, sprintf('已连接 | HAPI %s | API key: %s', ...
+                r.hapi_version, keyStr));
+        catch e
+            msg = ['连接失败：' e.message];
+            setStatus(app, msg, [0.8 0.1 0.1]);
+        end
+        lblMsg.Text = msg;
+        setApp(app);
+    end
+
+    function doSaveKey(~, ~)
+        if isempty(edKey.Value)
+            lblMsg.Text = '未输入 API key';
+            return;
+        end
+        try
+            app.client.setApiKey(edKey.Value);
+            lblMsg.Text = 'API key 已保存到后端配置';
+            setStatus(app, 'API key 已保存');
+        catch e
+            lblMsg.Text = ['保存失败：' e.message];
+            setStatus(app, e.message, [0.8 0.1 0.1]);
+        end
+        setApp(app);
+    end
+end
+
+function app = autoConnect(app)
+% 启动自检：连不上且疑似本机代理拦截时，自动关闭 MATLAB 内置代理后重试
     try
         r = app.client.health();
         keyStr = '已配置';
-        if ~r.api_key_set, keyStr = '未配置（fetch 可能受限）'; end
+        if ~r.api_key_set, keyStr = '未配置'; end
         setStatus(app, sprintf('已连接 | HAPI %s | API key: %s', ...
             r.hapi_version, keyStr));
+        setApp(app);
+        return;
     catch e
-        setStatus(app, ['连接失败：' e.message], [0.8 0.1 0.1]);
+        msg0 = e.message;
     end
-    setApp(app);
-end
-
-function onSetKey(src, ~)
-    app = getApp(src);
-    dlg = inputdlg('输入 HITRAN API key（hitran.org 个人主页生成）：', ...
-        'API key', 1, {''});
-    if ~isempty(dlg) && ~isempty(dlg{1})
+    if contains(msg0, {'CURLE', 'proxy', '代理', 'socks'}, 'IgnoreCase', true)
         try
-            app.client.setApiKey(dlg{1});
-            setStatus(app, 'API key 已保存');
-        catch e
-            setStatus(app, e.message, [0.8 0.1 0.1]);
+            s = settings; w = s.matlab.web;
+            w.UseProxy.PersonalValue = false;   % 新 HTTP 栈不支持 SOCKS 代理
+            r = app.client.health();
+            keyStr = '已配置';
+            if ~r.api_key_set, keyStr = '未配置'; end
+            setStatus(app, sprintf(['已连接（已自动关闭 MATLAB 内置代理）' ...
+                ' | HAPI %s | API key: %s'], r.hapi_version, keyStr));
+            setApp(app);
+            return;
+        catch e2
+            msg0 = e2.message;
         end
     end
+    setStatus(app, ['后端未连接：' msg0 '（可点右上角"连接设置"检查）'], ...
+        [0.8 0.1 0.1]);
     setApp(app);
 end
 
 % ---------------- 数据 ----------------
-function loadMolecules()
-    f = gcf; app = f.UserData;
+function app = loadMolecules(app)
     try
         r = app.client.molecules();
         mols = r.molecules;
@@ -217,17 +278,24 @@ function loadMolecules()
         % 默认选中 CH4
         idx = find([mols.id] == 6, 1);
         if ~isempty(idx), app.ddMol.Value = 6; end
-        onMolChanged(app.ddMol, []);
+        onMolChanged(app.ddMol, [], app);
+        onRefreshTables(app.btnRefresh, []);
     catch e
         app.ddMol.Items = {'后端未连接'};
-        app.lblStatus.Text = e.message;
+        setStatus(app, ['加载气体列表失败：' e.message], [0.8 0.1 0.1]);
     end
     setApp(app);
 end
 
-function onMolChanged(src, ~)
-    app = getApp(src);
+function onMolChanged(src, ~, appIn)
+    % 可由 loadMolecules 显式传入最新 app（此时 fig.UserData 还是旧快照）
+    if nargin >= 3 && ~isempty(appIn)
+        app = appIn;
+    else
+        app = getApp(src);
+    end
     M = src.Value;
+    if isempty(M) || ~isnumeric(M), return; end
     try
         r = app.client.isotopologues(M);
         iso = r.isotopologues;
@@ -242,19 +310,21 @@ function onMolChanged(src, ~)
     end
     % 自动建议表名
     mols = app.molecules;
-    idx = find([mols.id] == M, 1);
-    if ~isempty(idx)
-        app.edTable.Value = sprintf('%s_%d_%d', mols(idx).formula, M, app.ddIso.Value);
+    if ~isempty(mols)
+        idx = find([mols.id] == M, 1);
+        if ~isempty(idx)
+            app.edTable.Value = sprintf('%s_%d_%d', mols(idx).formula, M, app.ddIso.Value);
+        end
     end
     setApp(app);
 end
 
-function onRangeChanged(~, ~)
-    updateWlHint();
+function onRangeChanged(src, ~)
+    app = getApp(src);
+    updateWlHint(app);
 end
 
-function updateWlHint()
-    f = gcf; app = f.UserData;
+function app = updateWlHint(app)
     try
         n1 = app.edNuMin.Value; n2 = app.edNuMax.Value;
         app.lblWl.Text = sprintf('~%.0f-%.0fnm', 1e7/n2, 1e7/n1);
@@ -307,8 +377,7 @@ function onFetch(src, ~)
         r = app.client.fetch(tname, M, I, numin, numax);
         app.tableMeta(tname) = struct('M', M, 'I', I);
         setStatus(app, sprintf('下载完成：%d 条谱线', r.rows));
-        onRefreshTables(src, []);
-        app = getApp(src);
+        onRefreshTables(app.btnRefresh, []);
     catch e
         setStatus(app, e.message, [0.8 0.1 0.1]);
     end
@@ -326,7 +395,7 @@ function onImport(src, ~)
     try
         r = app.client.importPar(fullfile(fp, fn), dlg{1});
         setStatus(app, sprintf('导入完成：%d 条谱线', r.rows));
-        onRefreshTables(src, []);
+        onRefreshTables(app.btnRefresh, []);
     catch e
         setStatus(app, e.message, [0.8 0.1 0.1]);
     end
@@ -358,9 +427,10 @@ function onCalc(src, ~)
     setStatus(app, '计算中...', [0.8 0.5 0]); drawnow;
     try
         meta = resolveMeta(app, tname);
+        conc = app.edConc.Value;
         spec = struct();
         spec.components = struct('table', tname, 'M', meta.M, 'I', meta.I, ...
-            'concentration', app.edConc.Value);
+            'concentration', conc);
         spec.T = app.edT.Value;
         spec.p = app.edP.Value;
         spec.l = app.edL.Value;
@@ -378,11 +448,11 @@ function onCalc(src, ~)
         curve = struct('wn', r.wavenumber, 'y', r.values, ...
             'label', sprintf('%s %s T=%.0fK c=%.1e', tname, ...
                 app.ddSpec.Items{strcmp(app.ddSpec.ItemsData, spec.spectrum)}, ...
-                spec.T, spec.concentration), ...
+                spec.T, conc), ...
             'table', tname, 'yunit', r.y_unit);
         app.curves{end+1} = curve; %#ok<AGROW>
         setApp(app);
-        redrawAll();
+        redrawAll(app);
         setStatus(app, sprintf('计算完成：%d 点', r.n_points));
     catch e
         setStatus(app, e.message, [0.8 0.1 0.1]);
@@ -409,8 +479,7 @@ function onSticks(src, ~)
     end
 end
 
-function redrawAll()
-    f = gcf; app = f.UserData;
+function redrawAll(app)
     cla(app.axSpec); hold(app.axSpec, 'on');
     xunit = app.ddXUnit.Value;
     labels = {};
