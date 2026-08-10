@@ -56,7 +56,7 @@ hitran-viewer/
 2. **配置 HITRAN API key（可选但推荐）**
 
    免费注册 https://hitran.org 账号，在个人主页 https://hitran.org/profile/ 生成 API key；
-   复制 `backend/settings.template.json` 为 `backend/settings.json` 填入，或在 MATLAB 界面顶栏点击"连接设置"配置。
+   复制 `backend/settings.template.json` 为 `backend/settings.json` 填入，或在 MATLAB 界面顶栏点击"设置"配置（弹窗内含 hitran.org 获取 key 的超链接）。
    （官方文档注明下载数据需要 API key 且有每日请求限额；实测 `/lbl/api` 端点小流量请求无 key 也可用。）
 
 3. **启动后端**：双击 `start_backend.bat`（或 `python backend/app.py`）
@@ -75,7 +75,7 @@ hitran-viewer/
 3. 设置温度 296 K、压力 1 atm、光程与浓度，选择"吸收系数"，点击"计算并绘图"
 4. 切换不同气体表重复计算，曲线自动叠加对比
 5. 点击"显示谱线"绘制棒状图，鼠标悬停查看任意吸收线参数
-6. 导出 PNG/CSV
+6. 导出 PNG/CSV，或点击"导入工作区"将全部曲线写入 MATLAB 基础工作区变量 `hitran_curves`
 
 验证脚本 `matlab/verify_1653nm.m` 给出的参考结果：目标线 6046.9636 cm⁻¹（1653.72 nm），S = 1.43e-21。
 

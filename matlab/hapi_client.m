@@ -125,10 +125,3 @@ function checkStatus(r)
         error('hapi_client:server', '%s', msg);
     end
 end
-
-function m = errMsg(e)
-    m = e.message;
-    if ~isempty(e.cause)
-        m = [m ' | ' e.cause{1}.message]; %#ok<AGROW>
-    end
-end

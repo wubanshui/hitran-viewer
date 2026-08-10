@@ -20,7 +20,7 @@ function exportPng(app)
         'spectrum.png');
     if isequal(fn, 0), return; end
     exportgraphics(app.fig, fullfile(fp, fn), 'Resolution', 300);
-    uitoast(app.fig, ['已导出 ' fn], 'Icon', 'success');
+    notify(app, ['已导出 ' fn]);
 end
 
 function exportCsv(app)
@@ -35,5 +35,11 @@ function exportCsv(app)
     T = table(c.wn(:), 1e7 ./ c.wn(:), c.y(:), ...
         'VariableNames', {'wavenumber_cm1', 'wavelength_nm', 'value'});
     writetable(T, fullfile(fp, fn));
-    uitoast(app.fig, ['已导出 ' fn], 'Icon', 'success');
+    notify(app, ['已导出 ' fn]);
+end
+
+function notify(app, msg)
+    % 顶栏状态栏提示（避免依赖高版本才有的 uitoast）
+    app.lblStatus.Text = msg;
+    app.lblStatus.FontColor = [0.1 0.5 0.1];
 end

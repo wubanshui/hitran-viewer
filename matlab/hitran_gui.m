@@ -11,7 +11,8 @@ function app = hitran_gui()
 %   多曲线叠加、谱线棒状图、鼠标悬停显示谱线信息、PNG/CSV 导出。
 
     fig = uifigure('Name', 'hitran-viewer — 气体吸收线可视化', ...
-        'Position', [80 60 1280 780], 'Resize', 'on');
+        'Position', [80 60 1280 780], 'Resize', 'on', ...
+        'AutoResizeChildren', 'off');   % 组件像素位置恒定，避免缩放导致布局错位
 
     % ---------------- 应用状态 ----------------
     app = struct();
@@ -23,39 +24,51 @@ function app = hitran_gui()
     fig.UserData   = app;
 
     % ---------------- 顶栏功能区 ----------------
-    bar = uipanel(fig, 'Position', [10 735 1260 38], 'BorderType', 'line');
+    bar = uipanel(fig, 'Position', [10 735 1260 38], 'BorderType', 'line', ...
+        'BackgroundColor', [0.95 0.96 0.98]);
     uilabel(bar, 'Text', 'hitran-viewer', 'Position', [10 8 105 22], ...
-        'FontWeight', 'bold');
+        'FontWeight', 'bold', 'FontSize', 12);
     app.lblStatus = uilabel(bar, 'Text', '未连接', ...
         'Position', [120 8 1000 22], 'FontColor', [0.6 0.6 0.6]);
-    app.btnConnSettings = uibutton(bar, 'Text', '连接设置', ...
+    app.btnConnSettings = uibutton(bar, 'Text', '设置', ...
         'Position', [1145 6 105 26], 'ButtonPushedFcn', @onConnSettings);
 
     % ---------------- 左侧面板 ----------------
     pnl = uipanel(fig, 'Position', [10 10 380 720], 'BorderType', 'none');
 
     % --- 数据区 ---
-    grpData = uipanel(pnl, 'Title', '数据', 'Position', [0 485 380 235]);
+    grpData = uipanel(pnl, 'Title', '数据', 'Position', [0 485 380 235], ...
+        'FontSize', 12, 'FontWeight', 'bold');
     uilabel(grpData, 'Text', '气体', 'Position', [10 178 34 22]);
     app.ddMol = uidropdown(grpData, 'Position', [50 178 150 22], ...
         'Items', {'加载中...'}, 'ItemsData', {0}, ...
+        'Tooltip', '目标气体（HITRAN 分子编号 + 化学式 + 中文名）', ...
         'ValueChangedFcn', @onMolChanged);
     uilabel(grpData, 'Text', '同位素', 'Position', [208 178 46 22]);
     app.ddIso = uidropdown(grpData, 'Position', [258 178 112 22], ...
-        'Items', {'1'}, 'ItemsData', {1});
+        'Items', {'1'}, 'ItemsData', {1}, ...
+        'Tooltip', '同位素编号（1=最丰富同位素，如 CH4 主同位素）');
 
     uilabel(grpData, 'Text', '波数下限 cm-1', 'Position', [10 148 80 22]);
     app.edNuMin = uieditfield(grpData, 'numeric', 'Value', 6040, ...
-        'Position', [95 148 65 22], 'ValueChangedFcn', @onRangeChanged);
+        'Position', [95 148 65 22], ...
+        'Tooltip', ['光谱范围下限波数 ν（cm⁻¹），正数；' ...
+            '换算关系 λ(nm)=1e7/ν；示例：6040'], ...
+        'ValueChangedFcn', @onRangeChanged);
     uilabel(grpData, 'Text', '上限', 'Position', [168 148 28 22]);
     app.edNuMax = uieditfield(grpData, 'numeric', 'Value', 6060, ...
-        'Position', [200 148 65 22], 'ValueChangedFcn', @onRangeChanged);
+        'Position', [200 148 65 22], ...
+        'Tooltip', ['光谱范围上限波数 ν（cm⁻¹），需大于下限；' ...
+            '示例：6060（对应 ~1653 nm）'], ...
+        'ValueChangedFcn', @onRangeChanged);
     app.lblWl = uilabel(grpData, 'Text', '', 'Position', [272 148 98 22], ...
         'FontSize', 10, 'FontColor', [0.3 0.5 0.7]);
 
     uilabel(grpData, 'Text', '表名', 'Position', [10 118 34 22]);
     app.edTable = uieditfield(grpData, 'text', 'Value', 'CH4_1653', ...
-        'Position', [50 118 140 22]);
+        'Position', [50 118 140 22], ...
+        'Tooltip', ['本地数据表名：字母/数字/下划线，不带扩展名；' ...
+            '命名建议：气体_波段，如 CH4_1653']);
     app.btnFetch = uibutton(grpData, 'Text', 'Fetch 下载', ...
         'Position', [200 118 95 22], 'ButtonPushedFcn', @onFetch);
     app.btnImport = uibutton(grpData, 'Text', '导入 .par', ...
@@ -72,69 +85,101 @@ function app = hitran_gui()
         'FontColor', [0.3 0.5 0.7]);
 
     % --- 参数区 ---
-    grpParam = uipanel(pnl, 'Title', '环境与计算参数', 'Position', [0 280 380 200]);
+    grpParam = uipanel(pnl, 'Title', '环境与计算参数', 'Position', [0 280 380 200], ...
+        'FontSize', 12, 'FontWeight', 'bold');
     uilabel(grpParam, 'Text', '温度 K', 'Position', [10 142 45 22]);
     app.edT = uieditfield(grpParam, 'numeric', 'Value', 296, ...
-        'Position', [60 142 60 22]);
+        'Position', [60 142 60 22], ...
+        'Tooltip', ['气体温度 T（K，开尔文），影响线强与多普勒展宽；' ...
+            '室温≈296；格式：正数，示例 296']);
     uilabel(grpParam, 'Text', '压力 atm', 'Position', [135 142 55 22]);
     app.edP = uieditfield(grpParam, 'numeric', 'Value', 1, ...
-        'Position', [195 142 60 22]);
+        'Position', [195 142 60 22], ...
+        'Tooltip', ['总压 p（atm，标准大气压），决定碰撞（洛伦兹）展宽；' ...
+            '1 atm=101325 Pa；格式：正数']);
     uilabel(grpParam, 'Text', '光程 cm', 'Position', [270 142 45 22]);
     app.edL = uieditfield(grpParam, 'numeric', 'Value', 10, ...
-        'Position', [315 142 55 22]);
+        'Position', [315 142 55 22], ...
+        'Tooltip', ['吸收光程 L（cm），仅透过率/吸收谱生效（T=exp(-k·L)）；' ...
+            '光声/直接吸收池长度；格式：正数']);
 
     uilabel(grpParam, 'Text', '浓度(摩尔分数)', 'Position', [10 112 90 22]);
     app.edConc = uieditfield(grpParam, 'numeric', 'Value', 0.01, ...
-        'Position', [105 112 75 22]);
+        'Position', [105 112 75 22], ...
+        'Tooltip', ['目标气体摩尔分数 x（0~1 无量纲），' ...
+            '1%=0.01，1 ppm=1e-6；格式：0~1 小数']);
     uilabel(grpParam, 'Text', '线型', 'Position', [195 112 30 22]);
     app.ddShape = uidropdown(grpParam, 'Position', [230 112 140 22], ...
         'Items', {'Voigt', 'Lorentz', 'Gaussian(Doppler)', 'HT'}, ...
         'ItemsData', {'voigt', 'lorentz', 'gaussian', 'ht'}, ...
+        'Tooltip', ['线型函数：Voigt=常用（碰撞+多普勒卷积）；' ...
+            'HT=高速线型（含 Dicke 变窄等效应）'], ...
         'Value', 'voigt');
 
     uilabel(grpParam, 'Text', '网格步长 cm-1', 'Position', [10 82 85 22]);
     app.edStep = uieditfield(grpParam, 'numeric', 'Value', 0.002, ...
-        'Position', [100 82 65 22]);
+        'Position', [100 82 65 22], ...
+        'Tooltip', ['波数网格步长 Δν（cm⁻¹），越小越精细但越慢；' ...
+            '建议≤线宽一半；格式：正小数，示例 0.002']);
     uilabel(grpParam, 'Text', '仪器函数', 'Position', [180 82 60 22]);
     app.ddInstr = uidropdown(grpParam, 'Position', [245 82 125 22], ...
         'Items', {'none', 'sinc', 'gaussian', 'rectangular', 'triangular'}, ...
-        'Value', 'none');
+        'Tooltip', ['仪器函数卷积：none=不卷积（激光线宽远小于吸收线时）；' ...
+            'sinc=FT 光谱仪，gaussian=常见激光/光栅仪器'], ...
+        'Value', 'none', 'ValueChangedFcn', @onInstrChanged);
     app.lblRes = uilabel(grpParam, 'Text', '分辨率 cm-1', ...
         'Position', [180 52 60 22], 'Enable', 'off');
     app.edRes = uieditfield(grpParam, 'numeric', 'Value', 0.1, ...
-        'Position', [245 52 65 22], 'Enable', 'off');
+        'Position', [245 52 65 22], 'Enable', 'off', ...
+        'Tooltip', ['仪器分辨率（cm⁻¹），仅仪器函数≠none 时生效；' ...
+            '格式：正数，示例 0.1']);
 
     uilabel(grpParam, 'Text', '光谱类型', 'Position', [10 22 60 22]);
     app.ddSpec = uidropdown(grpParam, 'Position', [75 22 130 22], ...
         'Items', {'吸收系数', '透过率', '吸收谱'}, ...
         'ItemsData', {'abscoeff', 'transmittance', 'absorption'}, ...
+        'Tooltip', ['吸收系数 k(ν)（cm⁻¹）；透过率 T=exp(-kL)；' ...
+            '吸收谱 A=1-T'], ...
         'Value', 'abscoeff');
     uilabel(grpParam, 'Text', '横轴', 'Position', [215 22 30 22]);
     app.ddXUnit = uidropdown(grpParam, 'Position', [250 22 120 22], ...
-        'Items', {'cm-1', 'nm'}, 'Value', 'cm-1');
+        'Items', {'cm-1', 'nm'}, 'Value', 'cm-1', ...
+        'Tooltip', '横轴单位：波数 cm⁻¹ 或波长 nm（自动换算并反向坐标轴）');
 
     % --- 操作区 ---
-    grpAct = uipanel(pnl, 'Title', '操作', 'Position', [0 185 380 90]);
+    grpAct = uipanel(pnl, 'Title', '操作', 'Position', [0 185 380 90], ...
+        'FontSize', 12, 'FontWeight', 'bold');
     app.btnCalc = uibutton(grpAct, 'Text', '计算并绘图', ...
-        'Position', [10 30 115 26], 'ButtonPushedFcn', @onCalc);
+        'Position', [10 30 115 26], 'ButtonPushedFcn', @onCalc, ...
+        'BackgroundColor', [0.25 0.48 0.75], 'FontColor', [1 1 1]);
     app.btnClear = uibutton(grpAct, 'Text', '清空曲线', ...
         'Position', [135 30 100 26], 'ButtonPushedFcn', @onClear);
     app.btnSticks = uibutton(grpAct, 'Text', '显示谱线', ...
         'Position', [245 30 125 26], 'ButtonPushedFcn', @onSticks);
 
     % --- 导出区 ---
-    grpExp = uipanel(pnl, 'Title', '导出', 'Position', [0 95 380 85]);
+    grpExp = uipanel(pnl, 'Title', '导出', 'Position', [0 95 380 85], ...
+        'FontSize', 12, 'FontWeight', 'bold');
     app.btnPNG = uibutton(grpExp, 'Text', '导出 PNG', ...
-        'Position', [10 25 115 26], 'ButtonPushedFcn', @onExportPNG);
+        'Position', [10 25 85 26], 'ButtonPushedFcn', @onExportPNG);
     app.btnCSV = uibutton(grpExp, 'Text', '导出 CSV', ...
-        'Position', [135 25 115 26], 'ButtonPushedFcn', @onExportCSV);
+        'Position', [105 25 85 26], 'ButtonPushedFcn', @onExportCSV);
+    app.btnWS = uibutton(grpExp, 'Text', '导入工作区', ...
+        'Position', [200 25 170 26], 'ButtonPushedFcn', @onExportWS, ...
+        'Tooltip', '将全部已计算曲线以变量 hitran_curves 写入 MATLAB 基础工作区');
 
-    % ---------------- 右侧绘图区 ----------------
-    app.axSpec = uiaxes(fig, 'Position', [410 300 850 460]);
+    % ---------------- 右侧绘图区（像素位置固定，两图严格左右对齐） ----------------
+    app.axSpec = uiaxes(fig, 'Position', [410 300 740 460]);
     title(app.axSpec, '光谱'); grid(app.axSpec, 'on');
-    app.axStick = uiaxes(fig, 'Position', [410 40 850 200]);
+    app.axStick = uiaxes(fig, 'Position', [410 40 740 200]);
     title(app.axStick, '谱线棒状图');
     xlabel(app.axStick, '波数 cm^{-1}'); ylabel(app.axStick, '线强 S');
+
+    % 曲线图例（右侧固定文本区，按绘图顺序对应默认色序；
+    % 不用 axes legend：其会压缩绘图区导致两坐标区绘图框错位）
+    app.legendLabel = uilabel(fig, 'Text', '', ...
+        'Position', [1158 300 112 460], 'VerticalAlignment', 'top', ...
+        'FontSize', 10, 'FontColor', [0.25 0.25 0.25]);
 
     % 悬停提示标签（初始隐藏）
     app.tip = uilabel(fig, 'Text', '', 'Position', [0 0 260 90], ...
@@ -179,19 +224,25 @@ function onConnSettings(src, ~)
 end
 
 function openConnSettings(app)
-    dlg = uifigure('Name', '连接设置', 'Position', [480 380 440 220], ...
+    dlg = uifigure('Name', '设置', 'Position', [480 380 480 230], ...
         'Resize', 'off', 'WindowStyle', 'modal');
-    uilabel(dlg, 'Text', '后端地址', 'Position', [20 160 65 22]);
+    uilabel(dlg, 'Text', '后端地址', 'Position', [20 170 65 22]);
     edSrv = uieditfield(dlg, 'text', 'Value', app.client.BaseURL, ...
-        'Position', [90 160 235 22]);
-    uibutton(dlg, 'Text', '测试连接', 'Position', [335 160 85 22], ...
+        'Position', [90 170 275 22], ...
+        'Tooltip', 'Flask 后端服务地址，格式：http://IP:端口，默认 http://127.0.0.1:5000');
+    uibutton(dlg, 'Text', '测试连接', 'Position', [375 170 85 22], ...
         'ButtonPushedFcn', @doTest);
-    uilabel(dlg, 'Text', 'API key', 'Position', [20 120 65 22]);
-    edKey = uieditfield(dlg, 'text', 'Position', [90 120 235 22], ...
-        'Placeholder', 'hitran.org 个人主页生成，留空不修改');
-    uibutton(dlg, 'Text', '保存 key', 'Position', [335 120 85 22], ...
+    uilabel(dlg, 'Text', 'API key', 'Position', [20 130 65 22]);
+    edKey = uieditfield(dlg, 'text', 'Position', [90 130 190 22], ...
+        'Placeholder', '留空不修改', ...
+        'Tooltip', 'HITRAN API key：免费注册 hitran.org 后在个人主页生成');
+    uihyperlink(dlg, 'Text', 'hitran.org 获取 key', ...
+        'URL', 'https://hitran.org/profile/', ...
+        'Position', [285 130 125 22], ...
+        'Tooltip', '打开 HITRAN 个人主页（注册登录后在 Profile 页生成 API key）');
+    uibutton(dlg, 'Text', '保存 key', 'Position', [375 130 85 22], ...
         'ButtonPushedFcn', @doSaveKey);
-    lblMsg = uilabel(dlg, 'Text', '', 'Position', [20 20 400 80], ...
+    lblMsg = uilabel(dlg, 'Text', '', 'Position', [20 20 440 90], ...
         'VerticalAlignment', 'top', 'FontColor', [0.2 0.2 0.6]);
 
     function doTest(~, ~)
@@ -256,8 +307,17 @@ function app = autoConnect(app)
             msg0 = e2.message;
         end
     end
-    setStatus(app, ['后端未连接：' msg0 '（可点右上角"连接设置"检查）'], ...
+    setStatus(app, ['后端未连接：' msg0 '（可点右上角"设置"检查）'], ...
         [0.8 0.1 0.1]);
+    setApp(app);
+end
+
+function onInstrChanged(src, ~)
+    % 分辨率仅在启用仪器函数卷积时才有意义
+    app = getApp(src);
+    on = ~strcmp(src.Value, 'none');
+    app.edRes.Enable = on;
+    app.lblRes.Enable = on;
     setApp(app);
 end
 
@@ -463,7 +523,17 @@ function onClear(src, ~)
     app = getApp(src);
     app.curves = {};
     setApp(app);
-    cla(app.axSpec); title(app.axSpec, '光谱');
+    % 同步清空光谱与谱线棒状图（含悬停数据）；
+    % cla 会重置坐标区边距，显式恢复 Position 保证两图永远对齐
+    cla(app.axSpec); title(app.axSpec, '光谱'); grid(app.axSpec, 'on');
+    cla(app.axStick); title(app.axStick, '谱线棒状图');
+    xlabel(app.axStick, '波数 cm^{-1}'); ylabel(app.axStick, '线强 S');
+    set(app.axStick, 'YScale', 'linear');
+    app.axStick.UserData = [];
+    app.axSpec.Position  = [410 300 740 460];
+    app.axStick.Position = [410 40 740 200];
+    app.legendLabel.Text = '';
+    alignAxes(app);
 end
 
 function onSticks(src, ~)
@@ -473,16 +543,40 @@ function onSticks(src, ~)
     try
         r = app.client.lines(tname, app.edNuMin.Value, app.edNuMax.Value, 5000);
         plot_spectrum([], app.axStick, [], [], '', 'cm-1', r.lines);
+        alignAxes(app);
         setStatus(app, sprintf('已显示 %d 条谱线（悬停查看详情）', numel(r.lines)));
     catch e
         setStatus(app, e.message, [0.8 0.1 0.1]);
     end
 end
 
+function alignAxes(app)
+    % 强制两坐标区绘图框（InnerPosition）像素级对齐：
+    % InnerPosition 由 Position 与自动边距（刻度标签宽度）共同决定，
+    % 故用迭代反馈同时收敛宽度与左沿，并把棒状图横轴范围同步为
+    % 当前光谱范围，保证谱线与光谱峰上下严格对位。
+    % 先同步横轴范围（刻度标签变化会影响自动边距），再迭代对齐
+    if ~isempty(app.curves)
+        lim = app.axSpec.XLim;
+        if ~isinf(lim(1))
+            app.axStick.XLim = lim;
+        end
+    end
+    for iter = 1:3
+        drawnow;
+        iS = app.axSpec.InnerPosition;
+        iK = app.axStick.InnerPosition;
+        pK = app.axStick.Position;
+        dW = iS(3) - iK(3);
+        dL = iS(1) - iK(1);
+        if dW == 0 && dL == 0, break; end
+        app.axStick.Position = [pK(1) + dL, pK(2), pK(3) + dW, pK(4)];
+    end
+end
+
 function redrawAll(app)
     cla(app.axSpec); hold(app.axSpec, 'on');
     xunit = app.ddXUnit.Value;
-    labels = {};
     for k = 1:numel(app.curves)
         c = app.curves{k};
         if strcmp(xunit, 'nm')
@@ -491,11 +585,19 @@ function redrawAll(app)
             x = c.wn;
         end
         plot(app.axSpec, x, c.y, 'LineWidth', 1.2);
-        labels{end+1} = c.label; %#ok<AGROW>
     end
     if ~isempty(app.curves)
         ylabel(app.axSpec, sprintf('(%s)', app.curves{end}.yunit));
-        legend(app.axSpec, labels, 'Interpreter', 'none', 'Location', 'best');
+        % 图例写入右侧固定文本区（行序=绘图顺序=默认色序）
+        items = cell(1, numel(app.curves));
+        for k = 1:numel(app.curves)
+            c = app.curves{k};
+            items{k} = sprintf('%d. %s (T=%.0fK)', k, c.table, ...
+                str2double(regexp(c.label, 'T=(\d+)K', 'tokens', 'once')));
+        end
+        app.legendLabel.Text = strjoin(items, newline);
+    else
+        app.legendLabel.Text = '';
     end
     if strcmp(xunit, 'nm')
         xlabel(app.axSpec, '波长 nm'); set(app.axSpec, 'XDir', 'reverse');
@@ -503,6 +605,7 @@ function redrawAll(app)
         xlabel(app.axSpec, '波数 cm^{-1}'); set(app.axSpec, 'XDir', 'normal');
     end
     grid(app.axSpec, 'on');
+    alignAxes(app);
 end
 
 % ---------------- 导出 ----------------
@@ -514,4 +617,27 @@ end
 function onExportCSV(src, ~)
     app = getApp(src);
     export_tools('csv', app);
+end
+
+function onExportWS(src, ~)
+    % 将全部曲线写入基础工作区变量 hitran_curves
+    app = getApp(src);
+    if isempty(app.curves)
+        uialert(app.fig, '暂无曲线数据，请先计算并绘图', '提示');
+        return;
+    end
+    out = struct('table', {}, 'label', {}, 'yunit', {}, ...
+        'wavenumber_cm1', {}, 'wavelength_nm', {}, 'value', {});
+    for k = 1:numel(app.curves)
+        c = app.curves{k};
+        out(k).table = c.table;
+        out(k).label = c.label;
+        out(k).yunit = c.yunit;
+        out(k).wavenumber_cm1 = c.wn(:);
+        out(k).wavelength_nm  = 1e7 ./ c.wn(:);
+        out(k).value = c.y(:);
+    end
+    assignin('base', 'hitran_curves', out);
+    setStatus(app, sprintf('已导出 %d 条曲线到工作区变量 hitran_curves', ...
+        numel(out)));
 end
